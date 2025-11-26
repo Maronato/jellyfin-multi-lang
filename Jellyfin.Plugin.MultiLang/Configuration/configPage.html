@@ -144,22 +144,17 @@
                         <label class="inputLabel" for="altName">Name</label>
                         <input id="altName" type="text" is="emby-input" required />
                         <div class="fieldDescription">Display name (e.g., "Portuguese")</div>
-                </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel" for="altLanguageCode">Language Code</label>
-                        <input id="altLanguageCode" type="text" is="emby-input" required placeholder="pt-BR" />
-                        <div class="fieldDescription">Locale code for metadata (e.g., "pt-BR", "es-ES")</div>
-                </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel" for="altMetadataLang">Metadata Language</label>
-                        <input id="altMetadataLang" type="text" is="emby-input" placeholder="pt" />
-                        <div class="fieldDescription">Two-letter language code (e.g., "pt", "es")</div>
-                </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel" for="altMetadataCountry">Metadata Country</label>
-                        <input id="altMetadataCountry" type="text" is="emby-input" placeholder="BR" />
-                        <div class="fieldDescription">Two-letter country code (e.g., "BR", "ES")</div>
-                </div>
+                    </div>
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="altLanguage">Language</label>
+                        <select id="altLanguage" is="emby-select" required></select>
+                        <div class="fieldDescription">Select the language for metadata</div>
+                    </div>
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="altCountry">Country</label>
+                        <select id="altCountry" is="emby-select"></select>
+                        <div class="fieldDescription">Select the country for region-specific metadata</div>
+                    </div>
                     <div class="inputContainer">
                         <label class="inputLabel" for="altDestinationPath">Destination Base Path</label>
                         <div style="display: flex; align-items: center;">
@@ -169,11 +164,11 @@
                             </button>
                         </div>
                         <div class="fieldDescription">Base path for mirror directories (must be on same filesystem as source)</div>
-                </div>
+                    </div>
                     <div class="formDialogFooter">
                         <button is="emby-button" type="button" class="raised button-cancel" onclick="MultiLangConfig.closeDialog('addAlternativeDialog')">Cancel</button>
                         <button is="emby-button" type="submit" class="raised button-submit">Create</button>
-                </div>
+                    </div>
                 </form>
             </div>
         </div>
@@ -248,6 +243,9 @@
                 alternatives: [],
                 libraries: [],
                 users: [],
+                cultures: [],
+                countries: [],
+                serverConfig: null,
 
                 // Custom API helpers for plugin-specific endpoints
                 apiGet: function(endpoint) {
@@ -331,6 +329,52 @@
                 },
 
         // Load data
+                loadServerConfig: function() {
+                    var self = this;
+                    return ApiClient.getServerConfiguration().then(function(config) {
+                        self.serverConfig = config;
+                        return config;
+                    });
+                },
+
+                loadCultures: function() {
+                    var self = this;
+                    return ApiClient.getCultures().then(function(cultures) {
+                        self.cultures = cultures.sort(function(a, b) {
+                            return a.DisplayName.localeCompare(b.DisplayName);
+                        });
+                        return cultures;
+                    });
+                },
+
+                loadCountries: function() {
+                    var self = this;
+                    return ApiClient.getCountries().then(function(countries) {
+                        self.countries = countries.sort(function(a, b) {
+                            return a.DisplayName.localeCompare(b.DisplayName);
+                        });
+                        return countries;
+                    });
+                },
+
+                getLanguageDisplayName: function(code) {
+                    if (!code) {
+                        // Use server default if no code specified
+                        if (this.serverConfig && this.serverConfig.PreferredMetadataLanguage) {
+                            code = this.serverConfig.PreferredMetadataLanguage;
+                        } else {
+                            return 'default';
+                        }
+                    }
+                    // Try to find the culture name
+                    var culture = this.cultures.find(function(c) {
+                        return c.TwoLetterISOLanguageName === code || 
+                               c.ThreeLetterISOLanguageName === code ||
+                               c.DisplayName.toLowerCase() === code.toLowerCase();
+                    });
+                    return culture ? culture.DisplayName : code;
+                },
+
                 loadLibraries: function() {
                     var self = this;
                     Dashboard.showLoadingMsg();
@@ -371,10 +415,11 @@
                         
                         var html = '';
                         self.libraries.forEach(function(lib) {
+                            var langDisplay = self.getLanguageDisplayName(lib.PreferredMetadataLanguage);
                             html += '<div class="listItem">';
                             html += '<div class="listItemBody">';
                             html += '<div class="listItemBodyText">' + lib.Name + '</div>';
-                            html += '<div class="listItemBodyText secondary">' + (lib.CollectionType || 'mixed') + ' • ' + (lib.PreferredMetadataLanguage || 'default') + '</div>';
+                            html += '<div class="listItemBodyText secondary">' + (lib.CollectionType || 'mixed') + ' • ' + langDisplay + '</div>';
                             html += '</div>';
                             if (lib.IsMirror) {
                                 html += '<span class="material-icons" style="color: #00a4dc;">content_copy</span>';
@@ -571,11 +616,26 @@
 
                 createAlternative: function() {
                     var self = this;
+                    var languageSelect = document.getElementById('altLanguage');
+                    var countrySelect = document.getElementById('altCountry');
+                    var selectedCulture = this.cultures.find(function(c) { 
+                        return c.TwoLetterISOLanguageName === languageSelect.value; 
+                    });
+                    var selectedCountry = this.countries.find(function(c) { 
+                        return c.TwoLetterISORegionName === countrySelect.value; 
+                    });
+                    
+                    // Build language code like "pt-BR" from selections
+                    var languageCode = languageSelect.value;
+                    if (countrySelect.value) {
+                        languageCode += '-' + countrySelect.value;
+                    }
+                    
                     var data = {
                         Name: document.getElementById('altName').value,
-                        LanguageCode: document.getElementById('altLanguageCode').value,
-                        MetadataLanguage: document.getElementById('altMetadataLang').value || null,
-                        MetadataCountry: document.getElementById('altMetadataCountry').value || null,
+                        LanguageCode: languageCode,
+                        MetadataLanguage: languageSelect.value || null,
+                        MetadataCountry: countrySelect.value || null,
                         DestinationBasePath: document.getElementById('altDestinationPath').value
                     };
                     Dashboard.showLoadingMsg();
@@ -733,16 +793,59 @@
                     });
                 },
 
+                populateLanguageDropdowns: function() {
+                    var self = this;
+                    var langSelect = document.getElementById('altLanguage');
+                    var countrySelect = document.getElementById('altCountry');
+                    
+                    // Populate language dropdown
+                    langSelect.innerHTML = '<option value="">-- Select Language --</option>';
+                    this.cultures.forEach(function(culture) {
+                        langSelect.innerHTML += '<option value="' + culture.TwoLetterISOLanguageName + '">' + 
+                            culture.DisplayName + ' (' + culture.TwoLetterISOLanguageName + ')</option>';
+                    });
+                    
+                    // Populate country dropdown
+                    countrySelect.innerHTML = '<option value="">-- None (Optional) --</option>';
+                    this.countries.forEach(function(country) {
+                        countrySelect.innerHTML += '<option value="' + country.TwoLetterISORegionName + '">' + 
+                            country.DisplayName + ' (' + country.TwoLetterISORegionName + ')</option>';
+                    });
+                    
+                    // Auto-fill name when language changes
+                    langSelect.addEventListener('change', function() {
+                        var nameInput = document.getElementById('altName');
+                        if (!nameInput.value) {
+                            var culture = self.cultures.find(function(c) { 
+                                return c.TwoLetterISOLanguageName === langSelect.value; 
+                            });
+                            if (culture) {
+                                nameInput.value = culture.DisplayName;
+                            }
+                        }
+                    });
+                },
+
                 init: function() {
                     var self = this;
                     
-                    // Load all data
-                    this.loadLibraries();
-                    this.loadAlternatives();
-                    this.loadUsers();
-                    this.loadLdapStatus();
-                    this.loadLdapMappings();
-                    this.loadSettings();
+                    // Load reference data first, then other data
+                    Promise.all([
+                        this.loadServerConfig(),
+                        this.loadCultures(),
+                        this.loadCountries()
+                    ]).then(function() {
+                        // Now load the rest
+                        self.loadLibraries();
+                        self.loadAlternatives();
+                        self.loadUsers();
+                        self.loadLdapStatus();
+                        self.loadLdapMappings();
+                        self.loadSettings();
+                        
+                        // Populate dropdowns
+                        self.populateLanguageDropdowns();
+                    });
 
                     // Tab buttons
                     document.querySelectorAll('.emby-tab-button').forEach(function(btn) {
