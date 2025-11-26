@@ -103,6 +103,12 @@ public class MultiLangController : ControllerBase
             return BadRequest("Destination base path is required");
         }
 
+        // Check for duplicate name
+        if (config.LanguageAlternatives.Any(a => string.Equals(a.Name, request.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return BadRequest($"A language alternative with the name '{request.Name}' already exists");
+        }
+
         var alternative = new LanguageAlternative
         {
             Id = Guid.NewGuid(),
@@ -415,7 +421,16 @@ public class MultiLangController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            return NotFound(ex.Message);
+            // Distinguish between user not found (404) and invalid alternative ID (400)
+            // User ID is in the URL path - if not found, it's a 404
+            // Alternative ID is in the request body - if invalid, it's a 400
+            if (ex.ParamName == "userId")
+            {
+                return NotFound(ex.Message);
+            }
+
+            // Invalid alternative ID or other argument errors are bad requests
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
