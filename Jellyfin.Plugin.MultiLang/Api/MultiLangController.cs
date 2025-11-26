@@ -191,8 +191,14 @@ public class MultiLangController : ControllerBase
             return NotFound("Language alternative not found");
         }
 
+        // Parse source library ID (accepts both formats: with and without dashes)
+        if (!Guid.TryParse(request.SourceLibraryId, out var sourceLibraryId))
+        {
+            return BadRequest("Invalid source library ID format");
+        }
+
         // Validate mirror configuration
-        var validation = _mirrorService.ValidateMirrorConfiguration(request.SourceLibraryId, request.TargetPath);
+        var validation = _mirrorService.ValidateMirrorConfiguration(sourceLibraryId, request.TargetPath);
         if (!validation.IsValid)
         {
             return BadRequest(validation.ErrorMessage);
@@ -200,7 +206,7 @@ public class MultiLangController : ControllerBase
 
         // Get source library info
         var sourceLibrary = _mirrorService.GetJellyfinLibraries()
-            .FirstOrDefault(l => l.Id == request.SourceLibraryId);
+            .FirstOrDefault(l => l.Id == sourceLibraryId);
 
         if (sourceLibrary == null)
         {
@@ -210,7 +216,7 @@ public class MultiLangController : ControllerBase
         var mirror = new LibraryMirror
         {
             Id = Guid.NewGuid(),
-            SourceLibraryId = request.SourceLibraryId,
+            SourceLibraryId = sourceLibraryId,
             SourceLibraryName = sourceLibrary.Name,
             TargetLibraryName = request.TargetLibraryName ?? $"{sourceLibrary.Name} ({alternative.Name})",
             TargetPath = request.TargetPath,
@@ -540,10 +546,10 @@ public class CreateAlternativeRequest
 public class AddLibraryMirrorRequest
 {
     /// <summary>
-    /// Gets or sets the source library ID.
+    /// Gets or sets the source library ID (accepts GUID with or without dashes).
     /// </summary>
     [Required]
-    public Guid SourceLibraryId { get; set; }
+    public string SourceLibraryId { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets the target path.

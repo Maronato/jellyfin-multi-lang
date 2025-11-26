@@ -27,14 +27,14 @@
                     <button is="emby-button" class="emby-tab-button emby-button-tab" data-tab="usersTab">Users</button>
                     <button is="emby-button" class="emby-tab-button emby-button-tab" data-tab="ldapTab">LDAP</button>
                     <button is="emby-button" class="emby-tab-button emby-button-tab" data-tab="settingsTab">Settings</button>
-                </div>
+            </div>
 
-                <!-- Languages Tab -->
+            <!-- Languages Tab -->
                 <div id="languagesTab" class="tabContent active">
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Existing Jellyfin Libraries</h3>
                         <div id="librariesList" class="paperList"></div>
-            </div>
+                </div>
 
                     <div class="verticalSection">
                         <div class="sectionTitleContainer flex align-items-center">
@@ -42,12 +42,12 @@
                             <button is="emby-button" type="button" class="fab submit" id="btnAddAlternative" style="margin-left: auto;">
                                 <span class="material-icons add"></span>
                             </button>
-                </div>
-                        <div id="alternativesList" class="paperList"></div>
                     </div>
+                        <div id="alternativesList" class="paperList"></div>
                 </div>
+            </div>
 
-                <!-- Users Tab -->
+            <!-- Users Tab -->
                 <div id="usersTab" class="tabContent" style="display: none;">
                     <div class="verticalSection">
                         <h3 class="sectionTitle">User Language Assignments</h3>
@@ -55,12 +55,12 @@
                 </div>
             </div>
 
-                <!-- LDAP Tab -->
+            <!-- LDAP Tab -->
                 <div id="ldapTab" class="tabContent" style="display: none;">
                     <div class="verticalSection">
                         <h3 class="sectionTitle">LDAP Status</h3>
                         <div id="ldapStatus" class="paperList"></div>
-                    </div>
+                </div>
 
                     <div class="verticalSection">
                         <div class="sectionTitleContainer flex align-items-center">
@@ -68,7 +68,7 @@
                             <button is="emby-button" type="button" class="fab submit" id="btnAddLdapMapping" style="margin-left: auto;">
                                 <span class="material-icons add"></span>
                             </button>
-                        </div>
+                    </div>
                         <div id="ldapMappingsList" class="paperList"></div>
                     </div>
 
@@ -76,10 +76,10 @@
                         <button is="emby-button" type="button" class="raised" id="btnTestLdap">
                             <span>Test LDAP Connection</span>
                         </button>
-                    </div>
                 </div>
+            </div>
 
-                <!-- Settings Tab -->
+            <!-- Settings Tab -->
                 <div id="settingsTab" class="tabContent" style="display: none;">
                     <form id="settingsForm">
                         <div class="verticalSection">
@@ -89,17 +89,17 @@
                                 <label class="emby-checkbox-label">
                                     <input id="syncDisplayLanguage" type="checkbox" is="emby-checkbox" />
                                     <span>Sync Display Language</span>
-                                </label>
+                        </label>
                                 <div class="fieldDescription">Update user's Jellyfin UI language when their plugin language changes.</div>
-                            </div>
+                    </div>
 
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input id="syncSubtitleLanguage" type="checkbox" is="emby-checkbox" />
                                     <span>Sync Subtitle Language</span>
-                                </label>
+                        </label>
                                 <div class="fieldDescription">Update user's preferred subtitle language.</div>
-                            </div>
+                    </div>
 
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
@@ -107,13 +107,13 @@
                                     <span>Sync Audio Language</span>
                         </label>
                                 <div class="fieldDescription">Update user's preferred audio language.</div>
-                    </div>
+                </div>
 
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
                                     <input id="enableLdapIntegration" type="checkbox" is="emby-checkbox" />
                                     <span>Enable LDAP Integration</span>
-                                </label>
+                        </label>
                                 <div class="fieldDescription">Automatically assign languages based on LDAP group membership.</div>
                 </div>
 
@@ -128,7 +128,7 @@
                             <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                                 <span>Save Settings</span>
                             </button>
-                        </div>
+                </div>
                     </form>
                 </div>
 
@@ -144,7 +144,7 @@
                         <label class="inputLabel" for="altName">Name</label>
                         <input id="altName" type="text" is="emby-input" required />
                         <div class="fieldDescription">Display name (e.g., "Portuguese")</div>
-                    </div>
+                </div>
                     <div class="inputContainer">
                         <label class="inputLabel" for="altLanguageCode">Language Code</label>
                         <input id="altLanguageCode" type="text" is="emby-input" required placeholder="pt-BR" />
@@ -195,7 +195,7 @@
                             <button type="button" is="paper-icon-button-light" class="btnBrowseMirrorPath" title="Browse" style="margin-left: 0.5em;">
                                 <span class="material-icons folder_open" aria-hidden="true"></span>
                             </button>
-                        </div>
+                </div>
                         <div class="fieldDescription">Path where mirrored files will be created (auto-suggested, must be on same filesystem as source)</div>
                 </div>
                     <div class="inputContainer">
@@ -256,17 +256,17 @@
 
                 apiPost: function(endpoint, data) {
                     return ApiClient.fetch({
-                        url: ApiClient.getUrl(endpoint),
-                        type: 'POST',
+                url: ApiClient.getUrl(endpoint),
+                type: 'POST',
                         data: JSON.stringify(data),
                         contentType: 'application/json'
-                    });
+            });
                 },
 
                 apiPut: function(endpoint, data) {
                     return ApiClient.fetch({
-                        url: ApiClient.getUrl(endpoint),
-                        type: 'PUT',
+                url: ApiClient.getUrl(endpoint),
+                type: 'PUT',
                         data: JSON.stringify(data),
                         contentType: 'application/json'
                     });
@@ -355,12 +355,17 @@
                         }
                         
                         self.libraries = folders.map(function(folder) {
+                            // Convert Jellyfin's ItemId to proper GUID format with dashes
+                            var itemId = folder.ItemId;
+                            var guidId = itemId.length === 32 
+                                ? itemId.substring(0,8) + '-' + itemId.substring(8,12) + '-' + itemId.substring(12,16) + '-' + itemId.substring(16,20) + '-' + itemId.substring(20)
+                                : itemId;
                             return {
-                                Id: folder.ItemId,
+                                Id: guidId,
                                 Name: folder.Name,
                                 CollectionType: folder.CollectionType,
                                 PreferredMetadataLanguage: folder.LibraryOptions ? folder.LibraryOptions.PreferredMetadataLanguage : null,
-                                IsMirror: mirrorIds.has(folder.ItemId)
+                                IsMirror: mirrorIds.has(folder.ItemId) || mirrorIds.has(guidId)
                             };
                         });
                         
@@ -587,10 +592,20 @@
                 createMirror: function() {
                     var self = this;
                     var altId = document.getElementById('mirrorAlternativeId').value;
+                    var alternative = this.alternatives.find(function(a) { return a.Id === altId; });
+                    var sourceLibId = document.getElementById('mirrorSourceLibrary').value;
+                    var sourceLib = this.libraries.find(function(l) { return l.Id === sourceLibId; });
+                    
+                    // Use entered name, or auto-generate from source library + alternative
+                    var targetName = document.getElementById('mirrorTargetName').value;
+                    if (!targetName && sourceLib && alternative) {
+                        targetName = sourceLib.Name + ' (' + alternative.Name + ')';
+                    }
+                    
                     var data = {
-                        SourceLibraryId: document.getElementById('mirrorSourceLibrary').value,
+                        SourceLibraryId: sourceLibId,
                         TargetPath: document.getElementById('mirrorTargetPath').value,
-                        TargetLibraryName: document.getElementById('mirrorTargetName').value || null
+                        TargetLibraryName: targetName
                     };
                     Dashboard.showLoadingMsg();
                     this.apiPost('MultiLang/Alternatives/' + altId + '/Libraries', data).then(function() {
@@ -633,8 +648,8 @@
                     var self = this;
                     Dashboard.showLoadingMsg();
                     this.apiPut('MultiLang/Users/' + userId + '/Language', {
-                        LanguageAlternativeId: altId || null,
-                    ManuallySet: true
+                        AlternativeId: altId || null,
+                        ManuallySet: true
                     }).then(function() {
                         self.loadUsers();
                         Dashboard.hideLoadingMsg();

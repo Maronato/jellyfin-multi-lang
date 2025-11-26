@@ -655,8 +655,9 @@ public class MirrorService : IMirrorService
     /// </summary>
     private MediaBrowser.Model.Entities.VirtualFolderInfo? GetVirtualFolderById(Guid id)
     {
+        // Compare Guids directly - VirtualFolderInfo.ItemId is a string but represents a Guid
         return _libraryManager.GetVirtualFolders()
-            .FirstOrDefault(f => string.Equals(f.ItemId, id.ToString(), StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(f => Guid.TryParse(f.ItemId, out var folderId) && folderId == id);
     }
 
     /// <summary>
