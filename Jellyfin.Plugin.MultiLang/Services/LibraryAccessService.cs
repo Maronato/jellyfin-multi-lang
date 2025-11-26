@@ -54,8 +54,23 @@ public class LibraryAccessService : ILibraryAccessService
         if (expectedLibraries.Count == 0)
         {
             // No language assigned - give access to all non-mirror libraries
-            user.SetPermission(PermissionKind.EnableAllFolders, true);
-            _logger.LogInformation("User {Username} set to access all folders (no language assigned)", user.Username);
+            var nonMirrorLibraries = GetNonMirrorLibraries().ToList();
+            if (nonMirrorLibraries.Count == 0)
+            {
+                // No libraries configured, give full access
+                user.SetPermission(PermissionKind.EnableAllFolders, true);
+                _logger.LogInformation("User {Username} set to access all folders (no mirrors configured)", user.Username);
+            }
+            else
+            {
+                user.SetPermission(PermissionKind.EnableAllFolders, false);
+                var libraryIds = nonMirrorLibraries.Select(g => g.ToString("N")).ToArray();
+                user.SetPreference(PreferenceKind.EnabledFolders, libraryIds);
+                _logger.LogInformation(
+                    "User {Username} set to access {Count} non-mirror libraries (no language assigned)",
+                    user.Username,
+                    nonMirrorLibraries.Count);
+            }
         }
         else
         {
@@ -295,6 +310,36 @@ public class LibraryAccessService : ILibraryAccessService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Gets all libraries that are not mirrors for any language alternative.
+    /// These are the "original" libraries that unassigned users should see.
+    /// </summary>
+    private IEnumerable<Guid> GetNonMirrorLibraries()
+    {
+        var config = Plugin.Instance?.Configuration;
+        if (config == null)
+        {
+            yield break;
+        }
+
+        // Collect all mirror library IDs across all alternatives
+        var allMirrorIds = config.LanguageAlternatives
+            .SelectMany(a => a.MirroredLibraries)
+            .Where(m => m.TargetLibraryId.HasValue)
+            .Select(m => m.TargetLibraryId!.Value)
+            .ToHashSet();
+
+        // Return libraries that are not mirrors
+        foreach (var folder in _libraryManager.GetVirtualFolders())
+        {
+            var libraryId = Guid.Parse(folder.ItemId);
+            if (!allMirrorIds.Contains(libraryId))
+            {
+                yield return libraryId;
+            }
+        }
     }
 
     /// <summary>

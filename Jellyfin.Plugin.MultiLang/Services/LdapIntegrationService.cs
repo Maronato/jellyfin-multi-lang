@@ -123,9 +123,13 @@ public class LdapIntegrationService : ILdapIntegrationService
         }
 
         // Find matching mappings ordered by priority (highest first)
+        // For equal priorities, preserve original mapping order (first in list wins)
         var matchingMappings = config.LdapGroupMappings
-            .Where(m => groupSet.Contains(m.LdapGroupDn) || groupSet.Contains(m.LdapGroupName))
-            .OrderByDescending(m => m.Priority)
+            .Select((mapping, index) => new { Mapping = mapping, Index = index })
+            .Where(x => groupSet.Contains(x.Mapping.LdapGroupDn) || groupSet.Contains(x.Mapping.LdapGroupName))
+            .OrderByDescending(x => x.Mapping.Priority)
+            .ThenBy(x => x.Index)
+            .Select(x => x.Mapping)
             .ToList();
 
         if (matchingMappings.Count == 0)
