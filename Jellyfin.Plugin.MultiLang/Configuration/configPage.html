@@ -20,7 +20,7 @@
             </div>
 
             <!-- Languages Tab -->
-                <div id="languagesTab" class="tabContent active">
+                <div id="languagesTab" class="tabContent active" style="display: block;">
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Existing Libraries</h3>
                         <div id="librariesList" class="paperList"></div>
@@ -91,6 +91,12 @@
                     <div class="verticalSection">
                         <button is="emby-button" type="button" class="raised" id="btnTestLdap">
                             <span>Test LDAP Connection</span>
+                        </button>
+                    </div>
+
+                    <div class="verticalSection">
+                        <button is="emby-button" type="button" class="raised button-submit block emby-button" id="btnSaveLdapSettings">
+                            <span>Save LDAP Settings</span>
                         </button>
                 </div>
             </div>
@@ -266,6 +272,7 @@
                 cultures: [],
                 countries: [],
                 serverConfig: null,
+                initialized: false,
 
                 // Custom API helpers for plugin-specific endpoints
                 apiGet: function(endpoint) {
@@ -577,6 +584,9 @@
                             html += '</div></div>';
                             document.getElementById('ldapStatus').innerHTML = html;
                             
+                            // Load the checkbox value
+                            document.getElementById('enableLdapIntegration').checked = status.IsIntegrationEnabled;
+                            
                             // Load mappings only if installed
                             self.loadLdapMappings();
                         } else {
@@ -615,7 +625,6 @@
                         document.getElementById('syncDisplayLanguage').checked = config.SyncUserDisplayLanguage;
                         document.getElementById('syncSubtitleLanguage').checked = config.SyncUserSubtitleLanguage;
                         document.getElementById('syncAudioLanguage').checked = config.SyncUserAudioLanguage;
-                        document.getElementById('enableLdapIntegration').checked = config.EnableLdapIntegration;
                         document.getElementById('mirrorSyncInterval').value = config.MirrorSyncIntervalHours || 6;
                     });
                 },
@@ -912,9 +921,23 @@
                         config.SyncUserDisplayLanguage = document.getElementById('syncDisplayLanguage').checked;
                         config.SyncUserSubtitleLanguage = document.getElementById('syncSubtitleLanguage').checked;
                         config.SyncUserAudioLanguage = document.getElementById('syncAudioLanguage').checked;
-                        config.EnableLdapIntegration = document.getElementById('enableLdapIntegration').checked;
                         config.MirrorSyncIntervalHours = parseInt(document.getElementById('mirrorSyncInterval').value) || 6;
                         
+                        return ApiClient.updatePluginConfiguration(self.pluginUniqueId, config);
+                    }).then(function() {
+                        Dashboard.hideLoadingMsg();
+                        Dashboard.processPluginConfigurationUpdateResult();
+                    }).catch(function(e) {
+                        Dashboard.hideLoadingMsg();
+                        Dashboard.alert('Failed to save settings: ' + e.message);
+                    });
+                },
+
+                saveLdapSettings: function() {
+                    var self = this;
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function(config) {
+                        config.EnableLdapIntegration = document.getElementById('enableLdapIntegration').checked;
                         return ApiClient.updatePluginConfiguration(self.pluginUniqueId, config);
                     }).then(function() {
                         Dashboard.hideLoadingMsg();
@@ -922,7 +945,7 @@
                         self.loadLdapStatus();
                     }).catch(function(e) {
                         Dashboard.hideLoadingMsg();
-                        Dashboard.alert('Failed to save settings: ' + e.message);
+                        Dashboard.alert('Failed to save LDAP settings: ' + e.message);
                     });
                 },
 
@@ -979,6 +1002,12 @@
                         self.populateLanguageDropdowns();
                     });
 
+                    // Only attach event listeners once
+                    if (this.initialized) {
+                        return;
+                    }
+                    this.initialized = true;
+
                     // Tab buttons
                     document.querySelectorAll('.emby-tab-button').forEach(function(btn) {
                         btn.addEventListener('click', function() {
@@ -1023,6 +1052,11 @@
                     // Test LDAP button
                     document.getElementById('btnTestLdap').addEventListener('click', function() {
                         self.testLdapConnection();
+                    });
+
+                    // Save LDAP settings button
+                    document.getElementById('btnSaveLdapSettings').addEventListener('click', function() {
+                        self.saveLdapSettings();
                     });
 
                     // Form submissions
