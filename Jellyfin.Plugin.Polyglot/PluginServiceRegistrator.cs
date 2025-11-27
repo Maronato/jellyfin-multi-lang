@@ -27,7 +27,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // Event consumers
         serviceCollection.AddSingleton<IEventConsumer<UserCreatedEventArgs>, UserCreatedConsumer>();
         serviceCollection.AddSingleton<IEventConsumer<UserDeletedEventArgs>, UserDeletedConsumer>();
-        serviceCollection.AddSingleton<IEventConsumer<UserUpdatedEventArgs>, UserUpdatedConsumer>();
 
         // Hosted service for library change monitoring
         serviceCollection.AddHostedService<LibraryChangedConsumer>();
