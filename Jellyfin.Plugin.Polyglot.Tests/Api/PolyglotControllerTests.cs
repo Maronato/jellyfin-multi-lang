@@ -296,16 +296,14 @@ public class PolyglotControllerTests : IDisposable
 
     #endregion
 
-    #region AddLibraryMirror - User Access Updates
+    #region AddLibraryMirror - Accepts request and starts background work
 
     [Fact]
-    public async Task AddLibraryMirror_UpdatesAccessForUsersWithThatLanguage()
+    public void AddLibraryMirror_ValidRequest_AddsMirrorToConfigAndReturns202()
     {
-        // Arrange - create an alternative and users assigned to it
+        // Arrange - create an alternative
         var alternativeId = Guid.NewGuid();
         var sourceLibraryId = Guid.NewGuid();
-        var userId1 = Guid.NewGuid();
-        var userId2 = Guid.NewGuid();
 
         var alternative = new LanguageAlternative
         {
@@ -316,20 +314,6 @@ public class PolyglotControllerTests : IDisposable
             MirroredLibraries = new List<LibraryMirror>()
         };
         _context.Configuration.LanguageAlternatives.Add(alternative);
-
-        // Two users assigned to Portuguese (plugin managed)
-        _context.Configuration.UserLanguages.Add(new UserLanguageConfig
-        {
-            UserId = userId1,
-            SelectedAlternativeId = alternativeId,
-            IsPluginManaged = true
-        });
-        _context.Configuration.UserLanguages.Add(new UserLanguageConfig
-        {
-            UserId = userId2,
-            SelectedAlternativeId = alternativeId,
-            IsPluginManaged = true
-        });
 
         // Setup mock for source library
         _mirrorServiceMock.Setup(s => s.GetJellyfinLibraries())
@@ -349,90 +333,25 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        await _controller.AddLibraryMirror(alternativeId, request, CancellationToken.None);
+        var result = _controller.AddLibraryMirror(alternativeId, request);
 
-        // Assert - library access should be updated for both users
-        _libraryAccessServiceMock.Verify(
-            s => s.UpdateUserLibraryAccessAsync(userId1, It.IsAny<CancellationToken>()),
-            Times.Once,
-            "Should update access for user1 who has Portuguese assigned");
-
-        _libraryAccessServiceMock.Verify(
-            s => s.UpdateUserLibraryAccessAsync(userId2, It.IsAny<CancellationToken>()),
-            Times.Once,
-            "Should update access for user2 who has Portuguese assigned");
+        // Assert - should return 202 Accepted and add mirror to config
+        result.Result.Should().BeOfType<AcceptedResult>(
+            "mirror creation is async, should return 202 Accepted");
+        
+        alternative.MirroredLibraries.Should().ContainSingle();
+        var mirror = alternative.MirroredLibraries[0];
+        mirror.SourceLibraryId.Should().Be(sourceLibraryId);
+        mirror.TargetLibraryName.Should().Be("Filmes");
+        mirror.Status.Should().Be(SyncStatus.Pending, "mirror status should be Pending until background work completes");
     }
 
     [Fact]
-    public async Task AddLibraryMirror_DoesNotUpdateAccessForUsersOnOtherLanguages()
-    {
-        // Arrange - create two alternatives
-        var portugueseId = Guid.NewGuid();
-        var spanishId = Guid.NewGuid();
-        var sourceLibraryId = Guid.NewGuid();
-        var spanishUserId = Guid.NewGuid();
-
-        var portuguese = new LanguageAlternative
-        {
-            Id = portugueseId,
-            Name = "Portuguese",
-            LanguageCode = "pt-BR",
-            DestinationBasePath = "/data/portuguese",
-            MirroredLibraries = new List<LibraryMirror>()
-        };
-        var spanish = new LanguageAlternative
-        {
-            Id = spanishId,
-            Name = "Spanish",
-            LanguageCode = "es-ES",
-            DestinationBasePath = "/data/spanish",
-            MirroredLibraries = new List<LibraryMirror>()
-        };
-        _context.Configuration.LanguageAlternatives.Add(portuguese);
-        _context.Configuration.LanguageAlternatives.Add(spanish);
-
-        // User assigned to Spanish
-        _context.Configuration.UserLanguages.Add(new UserLanguageConfig
-        {
-            UserId = spanishUserId,
-            SelectedAlternativeId = spanishId,
-            IsPluginManaged = true
-        });
-
-        // Setup mock
-        _mirrorServiceMock.Setup(s => s.GetJellyfinLibraries())
-            .Returns(new List<LibraryInfo>
-            {
-                new LibraryInfo { Id = sourceLibraryId, Name = "Movies", CollectionType = "movies" }
-            });
-
-        _mirrorServiceMock.Setup(s => s.ValidateMirrorConfiguration(It.IsAny<Guid>(), It.IsAny<string>()))
-            .Returns((true, (string?)null));
-
-        var request = new AddLibraryMirrorRequest
-        {
-            SourceLibraryId = sourceLibraryId.ToString(),
-            TargetPath = "/data/portuguese/movies",
-            TargetLibraryName = "Filmes"
-        };
-
-        // Act - create mirror for PORTUGUESE
-        await _controller.AddLibraryMirror(portugueseId, request, CancellationToken.None);
-
-        // Assert - Spanish user should NOT be updated
-        _libraryAccessServiceMock.Verify(
-            s => s.UpdateUserLibraryAccessAsync(spanishUserId, It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Should NOT update access for user on different language");
-    }
-
-    [Fact]
-    public async Task AddLibraryMirror_DoesNotUpdateUnmanagedUsers()
+    public void AddLibraryMirror_SetsDefaultTargetLibraryName()
     {
         // Arrange
         var alternativeId = Guid.NewGuid();
         var sourceLibraryId = Guid.NewGuid();
-        var unmanagedUserId = Guid.NewGuid();
 
         var alternative = new LanguageAlternative
         {
@@ -444,15 +363,6 @@ public class PolyglotControllerTests : IDisposable
         };
         _context.Configuration.LanguageAlternatives.Add(alternative);
 
-        // User has Portuguese selected but is NOT plugin-managed
-        _context.Configuration.UserLanguages.Add(new UserLanguageConfig
-        {
-            UserId = unmanagedUserId,
-            SelectedAlternativeId = alternativeId,
-            IsPluginManaged = false // Not managed
-        });
-
-        // Setup mock
         _mirrorServiceMock.Setup(s => s.GetJellyfinLibraries())
             .Returns(new List<LibraryInfo>
             {
@@ -466,17 +376,16 @@ public class PolyglotControllerTests : IDisposable
         {
             SourceLibraryId = sourceLibraryId.ToString(),
             TargetPath = "/data/portuguese/movies",
-            TargetLibraryName = "Filmes"
+            TargetLibraryName = null // Not specified - should use default
         };
 
         // Act
-        await _controller.AddLibraryMirror(alternativeId, request, CancellationToken.None);
+        _controller.AddLibraryMirror(alternativeId, request);
 
-        // Assert - unmanaged user should NOT be updated
-        _libraryAccessServiceMock.Verify(
-            s => s.UpdateUserLibraryAccessAsync(unmanagedUserId, It.IsAny<CancellationToken>()),
-            Times.Never,
-            "Should NOT update access for unmanaged user");
+        // Assert - should use default naming pattern
+        var mirror = alternative.MirroredLibraries[0];
+        mirror.TargetLibraryName.Should().Be("Movies (Portuguese)",
+            "default name should be '{SourceName} ({AlternativeName})'");
     }
 
     #endregion
@@ -1281,7 +1190,7 @@ public class PolyglotControllerTests : IDisposable
     #region AddLibraryMirror - Error Paths
 
     [Fact]
-    public async Task AddLibraryMirror_AlternativeNotFound_ShouldReturn404()
+    public void AddLibraryMirror_AlternativeNotFound_ShouldReturn404()
     {
         // DESIRED BEHAVIOR: If the alternative doesn't exist, return 404.
         
@@ -1295,7 +1204,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(nonExistentAlternativeId, request);
+        var result = _controller.AddLibraryMirror(nonExistentAlternativeId, request);
 
         // Assert
         result.Result.Should().BeOfType<NotFoundObjectResult>(
@@ -1303,7 +1212,7 @@ public class PolyglotControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AddLibraryMirror_InvalidSourceLibraryId_ShouldReturn400()
+    public void AddLibraryMirror_InvalidSourceLibraryId_ShouldReturn400()
     {
         // DESIRED BEHAVIOR: If the source library ID format is invalid, return 400.
         
@@ -1317,7 +1226,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(alternative.Id, request);
+        var result = _controller.AddLibraryMirror(alternative.Id, request);
 
         // Assert
         result.Result.Should().BeOfType<BadRequestObjectResult>(
@@ -1325,7 +1234,7 @@ public class PolyglotControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AddLibraryMirror_SourceLibraryNotFound_ShouldReturn400()
+    public void AddLibraryMirror_SourceLibraryNotFound_ShouldReturn400()
     {
         // DESIRED BEHAVIOR: If the source library doesn't exist in Jellyfin, return 400.
         
@@ -1345,7 +1254,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(alternative.Id, request);
+        var result = _controller.AddLibraryMirror(alternative.Id, request);
 
         // Assert
         result.Result.Should().BeOfType<BadRequestObjectResult>(
@@ -1353,7 +1262,7 @@ public class PolyglotControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AddLibraryMirror_PathTraversal_ShouldReturn400()
+    public void AddLibraryMirror_PathTraversal_ShouldReturn400()
     {
         // DESIRED BEHAVIOR: Path traversal attempts should be rejected.
         
@@ -1373,7 +1282,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(alternative.Id, request);
+        var result = _controller.AddLibraryMirror(alternative.Id, request);
 
         // Assert
         result.Result.Should().BeOfType<BadRequestObjectResult>(
@@ -1384,7 +1293,7 @@ public class PolyglotControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AddLibraryMirror_DifferentFilesystems_ShouldReturn400()
+    public void AddLibraryMirror_DifferentFilesystems_ShouldReturn400()
     {
         // DESIRED BEHAVIOR: Hardlinks require same filesystem. If source and target
         // are on different filesystems, return 400 with clear error.
@@ -1405,7 +1314,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(alternative.Id, request);
+        var result = _controller.AddLibraryMirror(alternative.Id, request);
 
         // Assert
         result.Result.Should().BeOfType<BadRequestObjectResult>();
@@ -1415,7 +1324,7 @@ public class PolyglotControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AddLibraryMirror_SourceIsMirrorLibrary_ShouldReturn400()
+    public void AddLibraryMirror_SourceIsMirrorLibrary_ShouldReturn400()
     {
         // DESIRED BEHAVIOR: Cannot create a mirror of a mirror library.
         // Only source (non-mirror) libraries can be mirrored.
@@ -1450,7 +1359,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(alternative.Id, request);
+        var result = _controller.AddLibraryMirror(alternative.Id, request);
 
         // Assert
         result.Result.Should().BeOfType<BadRequestObjectResult>(
@@ -1461,7 +1370,7 @@ public class PolyglotControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task AddLibraryMirror_DuplicateMirrorForSameSource_ShouldReturn400()
+    public void AddLibraryMirror_DuplicateMirrorForSameSource_ShouldReturn400()
     {
         // DESIRED BEHAVIOR: Each source library can only be mirrored once per language alternative.
         // Attempting to create a second mirror for the same source should return 400.
@@ -1497,7 +1406,7 @@ public class PolyglotControllerTests : IDisposable
         };
 
         // Act
-        var result = await _controller.AddLibraryMirror(alternative.Id, request);
+        var result = _controller.AddLibraryMirror(alternative.Id, request);
 
         // Assert
         result.Result.Should().BeOfType<BadRequestObjectResult>(

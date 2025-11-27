@@ -182,15 +182,15 @@ public class PolyglotController : ControllerBase
 
     /// <summary>
     /// Adds a library mirror to a language alternative.
+    /// Mirror creation happens in the background - check the mirror status for progress.
     /// </summary>
     [HttpPost("Alternatives/{id:guid}/Libraries")]
-    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<LibraryMirror>> AddLibraryMirror(
+    public ActionResult<LibraryMirror> AddLibraryMirror(
         Guid id,
-        [FromBody] AddLibraryMirrorRequest request,
-        CancellationToken cancellationToken = default)
+        [FromBody] AddLibraryMirrorRequest request)
     {
         var config = Plugin.Instance?.Configuration;
         if (config == null)
@@ -252,40 +252,42 @@ public class PolyglotController : ControllerBase
         alternative.MirroredLibraries.Add(mirror);
         Plugin.Instance?.SaveConfiguration();
 
-        // Create the mirror
-        try
-        {
-            await _mirrorService.CreateMirrorAsync(alternative, mirror, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create mirror for {SourceLibrary}", sourceLibrary.Name);
-            // Don't return error - mirror was added but sync can be retried
-        }
+        _logger.LogInformation("Queued mirror creation for {SourceLibrary} -> {TargetLibrary}",
+            sourceLibrary.Name, mirror.TargetLibraryName);
 
-        // Update library access for all users assigned to this language alternative
-        try
+        // Create the mirror in the background
+        _ = Task.Run(async () =>
         {
-            var usersWithThisLanguage = config.UserLanguages
-                .Where(u => u.SelectedAlternativeId == alternative.Id && u.IsPluginManaged)
-                .Select(u => u.UserId)
-                .ToList();
-
-            foreach (var userId in usersWithThisLanguage)
+            try
             {
-                await _libraryAccessService.UpdateUserLibraryAccessAsync(userId, cancellationToken)
-                    .ConfigureAwait(false);
+                await _mirrorService.CreateMirrorAsync(alternative, mirror, CancellationToken.None);
+
+                // Update library access for all users assigned to this language alternative
+                var currentConfig = Plugin.Instance?.Configuration;
+                if (currentConfig != null)
+                {
+                    var usersWithThisLanguage = currentConfig.UserLanguages
+                        .Where(u => u.SelectedAlternativeId == alternative.Id && u.IsPluginManaged)
+                        .Select(u => u.UserId)
+                        .ToList();
+
+                    foreach (var userId in usersWithThisLanguage)
+                    {
+                        await _libraryAccessService.UpdateUserLibraryAccessAsync(userId, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+
+                    _logger.LogInformation("Updated library access for {Count} users after creating mirror {MirrorName}",
+                        usersWithThisLanguage.Count, mirror.TargetLibraryName);
+                }
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background mirror creation failed for {SourceLibrary}", sourceLibrary.Name);
+            }
+        });
 
-            _logger.LogInformation("Updated library access for {Count} users after creating mirror {MirrorName}",
-                usersWithThisLanguage.Count, mirror.TargetLibraryName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to update user library access after creating mirror");
-        }
-
-        return CreatedAtAction(nameof(GetAlternatives), new { id = alternative.Id }, mirror);
+        return Accepted(mirror);
     }
 
     /// <summary>
