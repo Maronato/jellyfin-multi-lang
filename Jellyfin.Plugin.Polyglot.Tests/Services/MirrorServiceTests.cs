@@ -782,5 +782,61 @@ public class MirrorServiceCleanupTests : IDisposable
         // Files for the mirror should be deleted when the source is gone
         Directory.Exists(tempDir).Should().BeFalse("mirror files should be deleted when source library is deleted");
     }
+
+    [Fact]
+    public async Task CleanupOrphanedMirrors_SourceDeleted_MirrorExists_DeletesMirrorLibraryInJellyfin()
+    {
+        // Arrange - This tests the bug scenario:
+        // User deletes source library, but mirror library still exists in Jellyfin.
+        // The plugin should delete the mirror library from Jellyfin, not just the files.
+        var sourceId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+
+        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
+
+        // Use a real temp directory so we can verify deletion behavior
+        var tempDir = Path.Combine(Path.GetTempPath(), "polyglot_cleanup_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        var mirror = _context.AddMirror(
+            alternative,
+            sourceId,
+            "Movies",
+            targetLibraryId: targetId,
+            targetPath: tempDir);
+
+        // Simulate Jellyfin state: source library is missing, but target (mirror) library STILL exists
+        _libraryManagerMock.Setup(m => m.GetVirtualFolders()).Returns(new List<VirtualFolderInfo>
+        {
+            new()
+            {
+                ItemId = targetId.ToString(),
+                Name = mirror.TargetLibraryName,
+                CollectionType = CollectionTypeOptions.movies,
+                Locations = new[] { tempDir },
+                LibraryOptions = new MediaBrowser.Model.Configuration.LibraryOptions()
+            }
+        });
+
+        // Act
+        var result = await _service.CleanupOrphanedMirrorsAsync();
+
+        // Assert - mirror should be removed from configuration
+        result.TotalCleaned.Should().Be(1);
+        result.CleanedUpMirrors.Should().ContainSingle()
+            .Which.Should().Contain(mirror.TargetLibraryName)
+            .And.Contain("source deleted");
+
+        alternative.MirroredLibraries.Should().BeEmpty();
+
+        // Mirror library should be removed from Jellyfin
+        _libraryManagerMock.Verify(
+            m => m.RemoveVirtualFolder(mirror.TargetLibraryName, true),
+            Times.Once,
+            "Mirror library should be deleted from Jellyfin when source library is deleted");
+
+        // Files for the mirror should be deleted when the source is gone
+        Directory.Exists(tempDir).Should().BeFalse("mirror files should be deleted when source library is deleted");
+    }
 }
 

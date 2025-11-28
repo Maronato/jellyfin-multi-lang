@@ -516,12 +516,12 @@ public class MirrorService : IMirrorService
         {
             try
             {
-                // Delete files only if source was deleted (files are now orphaned)
-                // If only the mirror library was deleted, the source still has the files
+                // When source is deleted: delete mirror library AND files (both are orphaned)
+                // When mirror is deleted: only remove config (library is already gone, source has the files)
+                var deleteLibrary = reason == "source deleted";
                 var deleteFiles = reason == "source deleted";
 
-                // Don't try to delete Jellyfin library - it's already gone
-                await DeleteMirrorAsync(mirror, deleteLibrary: false, deleteFiles: deleteFiles, cancellationToken)
+                await DeleteMirrorAsync(mirror, deleteLibrary: deleteLibrary, deleteFiles: deleteFiles, cancellationToken)
                     .ConfigureAwait(false);
 
                 // Remove from alternative's mirror list
