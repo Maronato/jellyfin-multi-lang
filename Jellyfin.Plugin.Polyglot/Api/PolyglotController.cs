@@ -591,11 +591,13 @@ public class PolyglotController : ControllerBase
     /// Tests LDAP connection and optionally looks up a user.
     /// </summary>
     /// <param name="username">Optional username to test group lookup.</param>
+    /// <param name="request">Optional request body (not used, but required for proper routing).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     [HttpPost("TestLdap")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<LdapTestResult>> TestLdap(
         [FromQuery] string? username = null,
+        [FromBody] TestLdapRequest? request = null,
         CancellationToken cancellationToken = default)
     {
         var result = await _ldapIntegrationService.TestConnectionAsync(username, cancellationToken);
