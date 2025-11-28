@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.Polyglot.Helpers;
@@ -11,6 +12,9 @@ namespace Jellyfin.Plugin.Polyglot.Configuration;
 /// </summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
+    private HashSet<string> _excludedExtensions = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _excludedDirectories = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Initializes a new instance of the <see cref="PluginConfiguration"/> class.
     /// </summary>
@@ -19,8 +23,8 @@ public class PluginConfiguration : BasePluginConfiguration
         LanguageAlternatives = new List<LanguageAlternative>();
         UserLanguages = new List<UserLanguageConfig>();
         LdapGroupMappings = new List<LdapGroupMapping>();
-        ExcludedExtensions = FileClassifier.DefaultExcludedExtensions.ToList();
-        ExcludedDirectories = FileClassifier.DefaultExcludedDirectories.ToList();
+        ExcludedExtensions = FileClassifier.DefaultExcludedExtensions;
+        ExcludedDirectories = FileClassifier.DefaultExcludedDirectories;
     }
 
     /// <summary>
@@ -70,23 +74,50 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets the file extensions to exclude from hardlinking (metadata and images).
     /// Extensions should include the leading dot (e.g., ".nfo", ".jpg").
+    /// Values are normalized to lowercase and deduplicated.
     /// </summary>
-    public List<string> ExcludedExtensions { get; set; }
+    public HashSet<string> ExcludedExtensions
+    {
+        get => _excludedExtensions;
+        set => _excludedExtensions = NormalizeToLowercaseSet(value);
+    }
 
     /// <summary>
     /// Gets or sets the directory names to exclude from mirroring.
     /// These are directory names (not full paths) that will be skipped during mirroring.
+    /// Values are normalized to lowercase and deduplicated.
     /// </summary>
-    public List<string> ExcludedDirectories { get; set; }
+    public HashSet<string> ExcludedDirectories
+    {
+        get => _excludedDirectories;
+        set => _excludedDirectories = NormalizeToLowercaseSet(value);
+    }
 
     /// <summary>
     /// Gets the default excluded file extensions (read-only, from FileClassifier).
     /// </summary>
-    public List<string> DefaultExcludedExtensions => FileClassifier.DefaultExcludedExtensions.ToList();
+    public HashSet<string> DefaultExcludedExtensions => NormalizeToLowercaseSet(FileClassifier.DefaultExcludedExtensions);
 
     /// <summary>
     /// Gets the default excluded directory names (read-only, from FileClassifier).
     /// </summary>
-    public List<string> DefaultExcludedDirectories => FileClassifier.DefaultExcludedDirectories.ToList();
+    public HashSet<string> DefaultExcludedDirectories => NormalizeToLowercaseSet(FileClassifier.DefaultExcludedDirectories);
+
+    /// <summary>
+    /// Normalizes a collection of strings to a lowercase HashSet.
+    /// </summary>
+    /// <param name="values">The values to normalize.</param>
+    /// <returns>A HashSet with all values converted to lowercase.</returns>
+    private static HashSet<string> NormalizeToLowercaseSet(IEnumerable<string>? values)
+    {
+        if (values == null)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return new HashSet<string>(
+            values.Select(v => v.ToLowerInvariant()),
+            StringComparer.OrdinalIgnoreCase);
+    }
 }
 

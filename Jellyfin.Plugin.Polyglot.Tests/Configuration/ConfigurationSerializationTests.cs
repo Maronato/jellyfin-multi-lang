@@ -527,6 +527,159 @@ public class ConfigurationSerializationTests
     }
 
     /// <summary>
+    /// Verifies that ExcludedExtensions are normalized to lowercase.
+    /// </summary>
+    [Fact]
+    public void ExcludedExtensions_AreNormalizedToLowercase()
+    {
+        // Arrange
+        var config = new PluginConfiguration
+        {
+            ExcludedExtensions = new HashSet<string> { ".NFO", ".JPG", ".Png" }
+        };
+
+        // Assert - all stored values should be lowercase
+        config.ExcludedExtensions.Should().HaveCount(3);
+        config.ExcludedExtensions.Should().OnlyContain(ext => ext == ext.ToLowerInvariant());
+        config.ExcludedExtensions.Should().Contain(".nfo");
+        config.ExcludedExtensions.Should().Contain(".jpg");
+        config.ExcludedExtensions.Should().Contain(".png");
+    }
+
+    /// <summary>
+    /// Verifies that ExcludedDirectories are normalized to lowercase.
+    /// </summary>
+    [Fact]
+    public void ExcludedDirectories_AreNormalizedToLowercase()
+    {
+        // Arrange
+        var config = new PluginConfiguration
+        {
+            ExcludedDirectories = new HashSet<string> { "METADATA", "ExtraFanart", ".Trickplay" }
+        };
+
+        // Assert - all stored values should be lowercase
+        config.ExcludedDirectories.Should().HaveCount(3);
+        config.ExcludedDirectories.Should().OnlyContain(dir => dir == dir.ToLowerInvariant());
+        config.ExcludedDirectories.Should().Contain("metadata");
+        config.ExcludedDirectories.Should().Contain("extrafanart");
+        config.ExcludedDirectories.Should().Contain(".trickplay");
+    }
+
+    /// <summary>
+    /// Verifies that duplicate ExcludedExtensions are removed (case-insensitive).
+    /// </summary>
+    [Fact]
+    public void ExcludedExtensions_RemovesDuplicates()
+    {
+        // Arrange
+        var config = new PluginConfiguration
+        {
+            ExcludedExtensions = new HashSet<string> { ".nfo", ".NFO", ".Nfo", ".jpg", ".JPG" }
+        };
+
+        // Assert
+        config.ExcludedExtensions.Should().HaveCount(2);
+        config.ExcludedExtensions.Should().Contain(".nfo");
+        config.ExcludedExtensions.Should().Contain(".jpg");
+    }
+
+    /// <summary>
+    /// Verifies that duplicate ExcludedDirectories are removed (case-insensitive).
+    /// </summary>
+    [Fact]
+    public void ExcludedDirectories_RemovesDuplicates()
+    {
+        // Arrange
+        var config = new PluginConfiguration
+        {
+            ExcludedDirectories = new HashSet<string> { "metadata", "METADATA", "Metadata", "extrafanart" }
+        };
+
+        // Assert
+        config.ExcludedDirectories.Should().HaveCount(2);
+        config.ExcludedDirectories.Should().Contain("metadata");
+        config.ExcludedDirectories.Should().Contain("extrafanart");
+    }
+
+    /// <summary>
+    /// Verifies that ExcludedExtensions normalization survives serialization.
+    /// XML deserialization adds to existing collections, so the result contains
+    /// both defaults and serialized values (deduplicated).
+    /// </summary>
+    [Fact]
+    public void ExcludedExtensions_NormalizationSurvivesSerialization()
+    {
+        // Arrange
+        var config = new PluginConfiguration
+        {
+            ExcludedExtensions = new HashSet<string> { ".NFO", ".JPG", ".custom" }
+        };
+
+        // Act
+        var result = SerializeAndDeserialize(config);
+
+        // Assert - values should still be lowercase and contain both defaults and custom
+        result.ExcludedExtensions.Should().OnlyContain(ext => ext == ext.ToLowerInvariant());
+        result.ExcludedExtensions.Should().Contain(".nfo");
+        result.ExcludedExtensions.Should().Contain(".jpg");
+        result.ExcludedExtensions.Should().Contain(".custom");
+    }
+
+    /// <summary>
+    /// Verifies that ExcludedDirectories normalization survives serialization.
+    /// XML deserialization adds to existing collections, so the result contains
+    /// both defaults and serialized values (deduplicated).
+    /// </summary>
+    [Fact]
+    public void ExcludedDirectories_NormalizationSurvivesSerialization()
+    {
+        // Arrange
+        var config = new PluginConfiguration
+        {
+            ExcludedDirectories = new HashSet<string> { "METADATA", "customdir" }
+        };
+
+        // Act
+        var result = SerializeAndDeserialize(config);
+
+        // Assert - values should still be lowercase and contain both defaults and custom
+        result.ExcludedDirectories.Should().OnlyContain(dir => dir == dir.ToLowerInvariant());
+        result.ExcludedDirectories.Should().Contain("metadata");
+        result.ExcludedDirectories.Should().Contain("customdir");
+    }
+
+    /// <summary>
+    /// Verifies that default ExcludedExtensions are set from FileClassifier defaults.
+    /// </summary>
+    [Fact]
+    public void Configuration_Default_HasExcludedExtensionsFromFileClassifier()
+    {
+        // Arrange & Act
+        var config = new PluginConfiguration();
+
+        // Assert
+        config.ExcludedExtensions.Should().NotBeEmpty();
+        config.ExcludedExtensions.Should().Contain(".nfo");
+        config.ExcludedExtensions.Should().Contain(".jpg");
+    }
+
+    /// <summary>
+    /// Verifies that default ExcludedDirectories are set from FileClassifier defaults.
+    /// </summary>
+    [Fact]
+    public void Configuration_Default_HasExcludedDirectoriesFromFileClassifier()
+    {
+        // Arrange & Act
+        var config = new PluginConfiguration();
+
+        // Assert
+        config.ExcludedDirectories.Should().NotBeEmpty();
+        config.ExcludedDirectories.Should().Contain("metadata");
+        config.ExcludedDirectories.Should().Contain("extrafanart");
+    }
+
+    /// <summary>
     /// Helper method to serialize and deserialize a configuration using XmlSerializer.
     /// </summary>
     private static PluginConfiguration SerializeAndDeserialize(PluginConfiguration config)
