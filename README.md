@@ -1,3 +1,5 @@
+![Logo](./logo.png)
+
 # Polyglot
 
 **Multi-language metadata for Jellyfin—without duplicating files.**

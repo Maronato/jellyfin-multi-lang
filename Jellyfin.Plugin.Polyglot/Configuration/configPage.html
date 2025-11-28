@@ -9,7 +9,6 @@
         <div data-role="content">
             <div class="content-primary">
                 <h2>Polyglot</h2>
-                <p class="fieldDescription">Create language-specific library mirrors with hardlinked media files and separate metadata.</p>
 
                 <!-- Tabs -->
                 <div class="tabs-viewmenubar" style="margin-bottom: 2em;">
@@ -180,22 +179,22 @@
                         <div style="margin-bottom: 1em; padding: 1em; background: rgba(255,255,255,0.03); border-radius: 4px;">
                             <div style="font-weight: 500; margin-bottom: 0.5em;">Include in Report (check to include actual values):</div>
                             
-                            <div class="checkboxContainer" style="margin-bottom: 0.3em;">
-                                <label class="emby-checkbox-label" style="padding: 0.3em 0;">
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
                                     <input id="debugIncludeFilePaths" type="checkbox" is="emby-checkbox" />
                                     <span>File paths</span>
                                 </label>
                             </div>
                             
-                            <div class="checkboxContainer" style="margin-bottom: 0.3em;">
-                                <label class="emby-checkbox-label" style="padding: 0.3em 0;">
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
                                     <input id="debugIncludeLibraryNames" type="checkbox" is="emby-checkbox" />
                                     <span>Library names</span>
                                 </label>
                             </div>
                             
-                            <div class="checkboxContainer" style="margin-bottom: 0.3em;">
-                                <label class="emby-checkbox-label" style="padding: 0.3em 0;">
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
                                     <input id="debugIncludeUserNames" type="checkbox" is="emby-checkbox" />
                                     <span>User details</span>
                                 </label>
@@ -204,15 +203,15 @@
                             <div style="border-top: 1px solid rgba(255,255,255,0.1); margin-top: 0.8em; padding-top: 0.8em;">
                                 <div style="font-weight: 500; margin-bottom: 0.5em;">Diagnostics:</div>
                                 
-                                <div class="checkboxContainer" style="margin-bottom: 0.3em;">
-                                    <label class="emby-checkbox-label" style="padding: 0.3em 0;">
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
                                         <input id="debugIncludeFilesystem" type="checkbox" is="emby-checkbox" checked />
                                         <span>Filesystem info (disk space, filesystem type)</span>
                                     </label>
                                 </div>
                                 
-                                <div class="checkboxContainer" style="margin-bottom: 0.3em;">
-                                    <label class="emby-checkbox-label" style="padding: 0.3em 0;">
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
                                         <input id="debugIncludeHardlinks" type="checkbox" is="emby-checkbox" checked />
                                         <span>Hardlink verification</span>
                                     </label>
