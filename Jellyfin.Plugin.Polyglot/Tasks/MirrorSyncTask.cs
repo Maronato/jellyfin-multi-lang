@@ -41,13 +41,10 @@ public class MirrorSyncTask : IScheduledTask
     /// <inheritdoc />
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
     {
+        // Use compatibility helper to handle string (10.10.x) vs enum (10.11+) Type property
         return new[]
         {
-            new TaskTriggerInfo
-            {
-                Type = TaskTriggerInfo.TriggerInterval,
-                IntervalTicks = TimeSpan.FromHours(6).Ticks
-            }
+            JellyfinCompatibility.CreateIntervalTrigger(TimeSpan.FromHours(6).Ticks)
         };
     }
 

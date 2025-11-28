@@ -709,7 +709,9 @@ public class MirrorService : IMirrorService
 
             // Media segment providers (intro/credits detection)
             options.DisabledMediaSegmentProviders = sourceOptions.DisabledMediaSegmentProviders;
-            options.MediaSegmentProvideOrder = sourceOptions.MediaSegmentProvideOrder;
+            // MediaSegmentProvideOrder was renamed to MediaSegmentProviderOrder in 10.11
+            // Use reflection to handle both versions for forward compatibility
+            JellyfinCompatibility.TryCopyProperty(sourceOptions, options, "MediaSegmentProviderOrder", "MediaSegmentProvideOrder");
 
             // Image/chapter extraction
             options.EnablePhotos = sourceOptions.EnablePhotos;

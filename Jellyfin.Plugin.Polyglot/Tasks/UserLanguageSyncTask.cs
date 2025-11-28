@@ -55,13 +55,10 @@ public class UserLanguageSyncTask : IScheduledTask
             time = new TimeSpan(3, 0, 0);
         }
 
+        // Use compatibility helper to handle string (10.10.x) vs enum (10.11+) Type property
         return new[]
         {
-            new TaskTriggerInfo
-            {
-                Type = TaskTriggerInfo.TriggerDaily,
-                TimeOfDayTicks = time.Ticks
-            }
+            JellyfinCompatibility.CreateDailyTrigger(time.Ticks)
         };
     }
 
