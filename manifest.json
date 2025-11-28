@@ -10,6 +10,14 @@
     "repositoryUrl": "https://github.com/Maronato/jellyfin-plugin-polyglot",
     "versions": [
       {
+        "version": "0.8.2.0",
+        "changelog": "## What's Changed\n\n### 🔧 Improvements\n- Add debug logging to PolyglotController for configuration diagnostics\n  - Track the number of language alternatives and total mirrors\n  - Enhanced logging during mirror creation to confirm additions and compare mirror counts\n- Enhance PluginConfiguration to use HashSet for excluded extensions and directories\n  - Improved performance and case-insensitive uniqueness\n  - Added automatic normalization to lowercase for consistent handling of file extensions and directory names\n\n### 🐛 Bug Fixes\n- Improve orphaned mirror cleanup logic in MirrorService\n  - When a source library is deleted, both the mirror library and its associated files are now properly removed\n\n### ✅ Testing\n- Added unit tests to verify normalization and deduplication behavior for excluded extensions and directories\n- Added test case to verify mirror library deletion when source library is missing\n\n**Full Changelog**: https://github.com/Maronato/jellyfin-plugin-polyglot/compare/v0.8.1...v0.8.2",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/Maronato/jellyfin-plugin-polyglot/releases/download/v0.8.2/polyglot_0.8.2.0.zip",
+        "checksum": "578679f7de24de8f3c594eab544ad175",
+        "timestamp": "2025-11-28T20:43:05Z"
+      },
+      {
         "version": "0.8.1.0",
         "changelog": "## What's Changed\r\n\r\n### 📝 Documentation\r\n- Comprehensive update to README.md with clearer installation instructions and new feature documentation\r\n- Expanded developer guide (`Jellyfin.Plugin.Polyglot/README.md`) with improved architecture overview, service descriptions, and data flow diagrams\r\n- Added sections on auto-managing new users and built-in diagnostics\r\n- Updated \"Building from Source\" section to \"Contributing\" with link to Developer Guide\r\n- Fixed formatting and typos in metadata descriptions\r\n\r\n### 🔧 Improvements\r\n- Simplified GitHub Actions workflow for plugin build and release\r\n- Refactored version extraction logic for improved clarity and maintainability\r\n- Updated artifact upload and release creation steps for better handling of existing releases\r\n- Updated repository URLs in manifest.json and README.md to reflect the correct plugin repository name\r\n- Improved changelog format in manifest.json for all versions\r\n\r\n### 🏠 Housekeeping\r\n- Updated manifest.json and build.yaml for v0.8.0 release artifacts\r\n\r\n**Full Changelog**: https://github.com/Maronato/jellyfin-multi-lang/compare/v0.8.0...main",
         "targetAbi": "10.10.0.0",
