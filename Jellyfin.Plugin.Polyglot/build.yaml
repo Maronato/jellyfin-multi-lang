@@ -15,4 +15,4 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.Polyglot.dll"
 changelog: "See GitHub releases for full changelog."
-repositoryUrl: "https://github.com/Maronato/jellyfin-polyglot"
+repositoryUrl: "https://github.com/Maronato/jellyfin-plugin-polyglot"
