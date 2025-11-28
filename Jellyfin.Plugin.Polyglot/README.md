@@ -1,89 +1,402 @@
 # Polyglot Plugin — Developer Guide
 
-Source code for the Jellyfin Polyglot plugin.
+This document covers the internal architecture, code organization, and contribution guidelines for developers.
+
+For user documentation, see the [root README](../README.md).
+
+## Architecture Overview
+
+Polyglot is a Jellyfin plugin that creates "mirror" libraries using filesystem hardlinks. Each mirror fetches metadata in a different language, while the actual media files remain in place.
+
+### System Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                                   JELLYFINSERVER                                     │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │                              POLYGLOT PLUGIN                                    │ │
+│  ├─────────────────────────────────────────────────────────────────────────────────┤ │
+│  │                                                                                 │ │
+│  │   ┌──────────────────┐      ┌──────────────────────────────────────────────┐    │ │
+│  │   │  Admin UI        │      │              REST API                        │    │ │
+│  │   │  configPage.html │◄────►│         PolyglotController                   │    │ │
+│  │   └──────────────────┘      └────────────────────┬─────────────────────────┘    │ │
+│  │                                                  │                              │ │
+│  │                    ┌─────────────────────────────┼─────────────────────────┐    │ │
+│  │                    │                             │                         │    │ │
+│  │                    ▼                             ▼                         ▼    │ │
+│  │   ┌────────────────────────┐  ┌────────────────────────┐  ┌──────────────────┐  │ │
+│  │   │    MirrorService       │  │  UserLanguageService   │  │LdapIntegration-  │  │ │
+│  │   │                        │  │                        │  │    Service       │  │ │
+│  │   │ • CreateMirrorAsync    │  │ • AssignLanguageAsync  │  │                  │  │ │
+│  │   │ • SyncMirrorAsync      │  │ • GetUserLanguage      │  │ • GetUserGroups  │  │ │
+│  │   │ • DeleteMirrorAsync    │  │ • ClearLanguageAsync   │  │ • DetermineLangu-│  │ │
+│  │   │ • CleanupOrphans       │  │ • RemoveUser           │  │   ageFromGroups  │  │ │
+│  │   └───────────┬────────────┘  └───────────┬────────────┘  └────────┬─────────┘  │ │
+│  │               │                           │                        │            │ │
+│  │               │                           ▼                        │            │ │
+│  │               │              ┌────────────────────────┐            │            │ │
+│  │               │              │  LibraryAccessService  │            │            │ │
+│  │               │              │                        │            │            │ │
+│  │               │              │ • GetExpectedAccess    │◄───────────┘            │ │
+│  │               │              │ • UpdateUserAccess     │                         │ │
+│  │               │              │ • ReconcileAllUsers    │                         │ │
+│  │               │              └───────────┬────────────┘                         │ │
+│  │               │                          │                                      │ │
+│  │               ▼                          ▼                                      │ │
+│  │   ┌─────────────────────────────────────────────────────────────────────────┐   │ │
+│  │   │                         JELLYFIN APIs                                   │   │ │
+│  │   │  ILibraryManager  │  IUserManager  │  IProviderManager  │  IFileSystem  │   │ │
+│  │   └─────────────────────────────────────────────────────────────────────────┘   │ │
+│  │                                                                                 │ │
+│  ├─────────────────────────────────────────────────────────────────────────────────┤ │
+│  │                           EVENT CONSUMERS                                       │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐     │ │
+│  │  │ UserCreated      │  │ UserDeleted      │  │ LibraryChanged             │     │ │
+│  │  │ Consumer         │  │ Consumer         │  │ Consumer                   │     │ │
+│  │  │                  │  │                  │  │                            │     │ │
+│  │  │ LDAP lookup ───► │  │ Cleanup config   │  │ ItemRemoved ──► Cleanup    │     │ │
+│  │  │ Auto-assign lang │  │                  │  │ orphaned mirrors           │     │ │
+│  │  └──────────────────┘  └──────────────────┘  └────────────────────────────┘     │ │
+│  │                                                                                 │ │
+│  ├─────────────────────────────────────────────────────────────────────────────────┤ │
+│  │                           SCHEDULED TASKS                                       │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐     │ │
+│  │  │ MirrorSyncTask   │  │ MirrorPostScan   │  │ UserLanguageSyncTask       │     │ │
+│  │  │                  │  │ Task             │  │                            │     │ │
+│  │  │ Every 6 hours    │  │ After lib scans  │  │ Daily at 3:00 AM           │     │ │
+│  │  │ Sync all mirrors │  │ Sync mirrors     │  │ Reconcile user access      │     │ │
+│  │  └──────────────────┘  └──────────────────┘  └────────────────────────────┘     │ │
+│  │                                                                                 │ │
+│  ├─────────────────────────────────────────────────────────────────────────────────┤ │
+│  │                              HELPERS                                            │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────────┐     │ │
+│  │  │ FileClassifier   │  │ FileSystemHelper │  │ DebugReportService         │     │ │
+│  │  │                  │  │                  │  │                            │     │ │
+│  │  │ What to hardlink │  │ P/Invoke for     │  │ Log buffer + diagnostics   │     │ │
+│  │  │ vs skip          │  │ hardlinks        │  │                            │     │ │
+│  │  └──────────────────┘  └──────────────────┘  └────────────────────────────┘     │ │
+│  │                                                                                 │ │
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                      │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│                              JELLYFIN LIBRARIES                                      │
+│                                                                                      │
+│    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+│    │   Movies     │    │ Movies (PT)  │    │  TV Shows    │    │ TV Shows(PT) │      │
+│    │   (Source)   │    │  (Mirror)    │    │   (Source)   │    │   (Mirror)   │      │
+│    │              │    │              │    │              │    │              │      │
+│    │  Lang: en    │    │  Lang: pt    │    │  Lang: en    │    │  Lang: pt    │      │
+│    └──────┬───────┘    └──────┬───────┘    └──────┬───────┘    └──────┬───────┘      │
+│           │                   │                   │                   │              │
+└───────────┼───────────────────┼───────────────────┼───────────────────┼──────────────┘
+            │                   │                   │                   │
+            │    ┌──────────────┴───────────────────┴──────────────┐    │
+            │    │                  HARDLINKS                      │    │
+            └────►                                                 ◄────┘
+                 │   Mirror files point to same inodes as source   │
+                 │                                                 │
+                 └──────────────────────┬──────────────────────────┘
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    FILESYSTEM                                          │
+│                                                                                        │
+│    /media/                                                                             │
+│    ├── movies/                          ← Source library path                          │
+│    │   └── Inception (2010)/                                                           │
+│    │       ├── Inception.mkv            ← Actual file (inode 12345)                    │
+│    │       ├── Inception.nfo            ← English metadata (NOT hardlinked)            │
+│    │       └── poster.jpg               ← English artwork (NOT hardlinked)             │
+│    │                                                                                   │
+│    └── polyglot/                                                                       │
+│        └── portuguese/                  ← Language alternative destination             │
+│            └── movies/                  ← Mirror library path                          │
+│                └── Inception (2010)/                                                   │
+│                    └── Inception.mkv    ← Hardlink to same inode 12345                 │
+│                    └── Inception.nfo    ← Portugese metadat                            │
+│                    └── poster.png       ← Portuguese artwork                           │
+│                                           (Portuguese metadata fetched by Jellyfin)    │
+│                                                                                        │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow: Mirror Creation
+
+```
+Admin clicks "Add Mirror"
+         │
+         ▼
+┌──────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│PolyglotController│────►│  MirrorService  │────►│FileSystemHelper │
+│                  │     │                 │     │                 │
+│ POST /Libraries  │     │CreateMirrorAsync│     │ CreateHardLink  │
+└──────────────────┘     └───────┬─────────┘     └─────────────────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    │            │            │
+                    ▼            ▼            ▼
+           ┌──────────────┐ ┌──────────┐ ┌───────────────┐
+           │Validate same │ │ Walk dir │ │Create Jellyfin│
+           │filesystem    │ │ structure│ │library + scan │
+           └──────────────┘ └──────────┘ └───────────────┘
+                                 │
+                                 ▼
+                    ┌────────────────────────┐
+                    │Update user library     │
+                    │access for users with   │
+                    │this language           │
+                    └────────────────────────┘
+```
+
+### Data Flow: User Library Access Calculation
+
+```
+User assigned to "Portuguese" language
+                    │
+                    ▼
+        ┌───────────────────────┐
+        │ LibraryAccessService  │
+        │ GetExpectedAccess()   │
+        └───────────┬───────────┘
+                    │
+    ┌───────────────┼───────────────┐
+    │               │               │
+    ▼               ▼               ▼
+┌─────────┐   ┌─────────────┐   ┌──────────────┐
+│ Get all │   │Get user's   │   │Get all       │
+│Jellyfin │   │language     │   │mirror IDs    │
+│libraries│   │mirrors      │   │(all langs)   │
+└────┬────┘   └──────┬──────┘   └──────┬───────┘
+     │               │                 │
+     └───────────────┴─────────────────┘
+                     │
+                     ▼
+        ┌────────────────────────┐
+        │   For each library:    │
+        │                        │
+        │ • Is it user's mirror? │──► Include ✓
+        │ • Is it OTHER mirror?  │──► Exclude ✗
+        │ • Is it source WITH    │
+        │   mirror for user?     │──► Exclude ✗
+        │ • Is it source WITHOUT │
+        │   mirror for user?     │──► Include ✓
+        │ • Is it non-managed?   │──► Preserve existing
+        └────────────────────────┘
+                     │
+                     ▼
+        ┌────────────────────────┐
+        │ Set EnableAllFolders   │
+        │ = false                │
+        │                        │
+        │ Set EnabledFolders     │
+        │ = calculated IDs       │
+        └────────────────────────┘
+```
+
+### External Integrations
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    EXTERNAL DEPENDENCIES                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌──────────────────────────┐     ┌───────────────────────────────┐ │
+│  │  jellyfin-plugin-ldapauth│     │     Operating System          │ │
+│  │  (Optional)              │     │                               │ │
+│  │                          │     │  ┌─────────────────────────┐  │ │
+│  │  Plugin ID:              │     │  │ Windows: kernel32.dll   │  │ │
+│  │  958aad66-3784-4f94-...  │     │  │   CreateHardLink()      │  │ │
+│  │                          │     │  ├─────────────────────────┤  │ │
+│  │  Polyglot reads config   │     │  │ Unix: libc              │  │ │
+│  │  via REFLECTION:         │     │  │   link()                │  │ │
+│  │  • LdapServer            │     │  └─────────────────────────┘  │ │
+│  │  • LdapBaseDn            │     │                               │ │
+│  │  • LdapBindUser          │     │  Filesystem must support      │ │
+│  │  • LdapSearchFilter      │     │  hardlinks (ext4, NTFS,       │ │
+│  │                          │     │  APFS, XFS, btrfs, ZFS)       │ │
+│  └──────────────────────────┘     └───────────────────────────────┘ │
+│              │                                    │                 │
+│              ▼                                    ▼                 │
+│  ┌──────────────────────────┐     ┌──────────────────────────────┐  │
+│  │ LdapIntegrationService   │     │    FileSystemHelper          │  │
+│  │                          │     │                              │  │
+│  │ Queries LDAP server for  │     │ P/Invoke calls for           │  │
+│  │ user's memberOf groups   │     │ native hardlink creation     │  │
+│  └──────────────────────────┘     └──────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ## Project Structure
 
 ```
 Jellyfin.Plugin.Polyglot/
 ├── Api/
-│   └── PolyglotController.cs       # REST API endpoints
+│   └── PolyglotController.cs        # REST API (admin-only endpoints)
 ├── Configuration/
-│   ├── PluginConfiguration.cs      # Settings model
-│   └── configPage.html             # Admin UI
+│   ├── PluginConfiguration.cs       # Persisted settings model
+│   └── configPage.html              # Admin UI (4 tabs: Languages, Users, LDAP, Settings)
 ├── EventConsumers/
-│   ├── LibraryChangedConsumer.cs   # Detects library deletions
-│   ├── UserCreatedConsumer.cs      # LDAP auto-assignment for new users
-│   ├── UserDeletedConsumer.cs      # Cleanup on user deletion
-│   └── UserUpdatedConsumer.cs      # Re-evaluates LDAP groups
+│   ├── LibraryChangedConsumer.cs    # Detects library deletions → cleanup orphans
+│   ├── UserCreatedConsumer.cs       # LDAP/auto-assign on new user
+│   └── UserDeletedConsumer.cs       # Cleanup user config on deletion
 ├── Helpers/
-│   ├── FileClassifier.cs           # Decides what to hardlink
-│   └── FileSystemHelper.cs         # Cross-platform hardlink ops
-├── Models/                         # Data models
+│   ├── FileClassifier.cs            # Decides what to hardlink vs skip
+│   ├── FileSystemHelper.cs          # Cross-platform hardlink creation (P/Invoke)
+│   └── PolyglotLogger.cs            # Logger extensions + debug buffer capture
+├── Models/
+│   ├── LanguageAlternative.cs       # Language config (name, path, mirrors)
+│   ├── LibraryMirror.cs             # Source → target mapping with sync status
+│   ├── UserLanguageConfig.cs        # Per-user language assignment
+│   ├── UserInfo.cs                  # API response model
+│   ├── LibraryInfo.cs               # API response model
+│   ├── LdapGroupMapping.cs          # LDAP group → language mapping
+│   └── SyncStatus.cs                # Enum: Pending, Syncing, Synced, Error
 ├── Services/
-│   ├── MirrorService.cs            # Hardlink creation & sync
-│   ├── LibraryAccessService.cs     # User permission management
-│   ├── UserLanguageService.cs      # Language assignments
-│   └── LdapIntegrationService.cs   # LDAP group lookup
+│   ├── IMirrorService.cs            # Interface
+│   ├── MirrorService.cs             # Hardlink creation, sync, cleanup
+│   ├── IUserLanguageService.cs      # Interface
+│   ├── UserLanguageService.cs       # Language assignment management
+│   ├── ILibraryAccessService.cs     # Interface
+│   ├── LibraryAccessService.cs      # User permission calculations
+│   ├── ILdapIntegrationService.cs   # Interface
+│   ├── LdapIntegrationService.cs    # LDAP group queries via reflection
+│   ├── IDebugReportService.cs       # Interface
+│   └── DebugReportService.cs        # Diagnostic report generation
 ├── Tasks/
-│   ├── MirrorPostScanTask.cs       # Sync after library scans
-│   ├── MirrorSyncTask.cs           # Periodic sync
-│   └── UserLanguageSyncTask.cs     # User access reconciliation
-├── Plugin.cs                       # Entry point
-└── PluginServiceRegistrator.cs     # DI registration
+│   ├── MirrorPostScanTask.cs        # ILibraryPostScanTask: sync after scans
+│   ├── MirrorSyncTask.cs            # IScheduledTask: periodic sync (6h default)
+│   └── UserLanguageSyncTask.cs      # IScheduledTask: daily access reconciliation
+├── Plugin.cs                        # Entry point, IHasWebPages, OnUninstalling cleanup
+└── PluginServiceRegistrator.cs      # DI registration
 ```
 
-## Key Services
+## Core Services
 
 ### MirrorService
 
-Handles hardlink operations:
+Handles all hardlink operations with per-mirror locking:
 
--   Creates hardlinks for media files, skips metadata
--   Creates Jellyfin libraries with target language settings
--   Syncs mirrors incrementally (adds new files, removes deleted ones)
--   Cleans up orphaned mirrors when libraries are deleted
+```csharp
+// Key operations
+Task CreateMirrorAsync(alternative, mirror, ct)    // Initial mirror creation
+Task SyncMirrorAsync(mirror, progress, ct)         // Incremental sync
+Task DeleteMirrorAsync(mirror, deleteLib, deleteFiles, ct)
+Task<OrphanCleanupResult> CleanupOrphanedMirrorsAsync(ct)
+```
+
+**Sync algorithm:**
+
+1. Build file sets with signatures (size + mtime) for source and target
+2. Detect additions (new in source), deletions (missing from source), modifications (signature mismatch)
+3. Delete removed files, recreate modified hardlinks, add new hardlinks
+4. Clean up empty directories
 
 ### LibraryAccessService
 
 Calculates which libraries each user should see:
 
--   Users with a language → see that language's mirrors
--   Users on "default" → see source libraries only
--   Unmanaged users → plugin doesn't touch their access
--   Non-managed libraries (e.g., "Home Videos") → access preserved
+```csharp
+IEnumerable<Guid> GetExpectedLibraryAccess(userId)
+Task UpdateUserLibraryAccessAsync(userId, ct)
+Task<bool> ReconcileUserAccessAsync(userId, ct)
+```
 
-### UserLanguageService
+**Access rules:**
 
-Manages language assignments:
-
--   Stores per-user preferences in plugin config
--   Supports "manual override" flag to prevent LDAP overwriting admin choices
--   Triggers library access updates on assignment changes
+-   User's language mirrors: ✅ included
+-   Other languages' mirrors: ❌ excluded
+-   Sources with mirror in user's language: ❌ excluded (user sees mirror instead)
+-   Sources without mirror in user's language: ✅ included
+-   Non-managed libraries: preserved (not touched)
 
 ### LdapIntegrationService
 
-Integrates with jellyfin-plugin-ldapauth:
+Integrates with jellyfin-plugin-ldapauth without a direct dependency:
 
--   Reads LDAP config via reflection (no direct dependency)
--   Queries group memberships via `memberOf` attribute
--   Maps groups to languages based on priority
+-   Reads LDAP config via **reflection** (plugin ID: `958aad66-3784-4f94-b0db-ff87df5c155e`)
+-   Queries `memberOf` attribute and extracts CN from DN
+-   Matches groups to language mappings by priority (highest wins)
+
+### DebugReportService
+
+Generates troubleshooting reports with optional anonymization:
+
+-   Captures recent logs in a circular buffer (500 entries, 1 hour)
+-   Verifies hardlinks by checking link count
+-   Reports filesystem info, disk space, and mirror health
 
 ## File Classification
 
 `FileClassifier` determines what gets hardlinked:
 
-| Hardlinked                     | Skipped                                    |
-| ------------------------------ | ------------------------------------------ |
-| `.mkv`, `.mp4`, `.avi`, `.ts`  | `.nfo`                                     |
-| `.mp3`, `.flac`, `.m4a`        | `.jpg`, `.png`, `.gif`, `.webp`            |
-| `.srt`, `.ass`, `.vtt`, `.sup` | `extrafanart/`, `.trickplay/`, `metadata/` |
+| Hardlinked                             | Skipped                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| `.mkv`, `.mp4`, `.avi`, `.ts`, `.m2ts` | `.nfo`                                                                 |
+| `.mp3`, `.flac`, `.m4a`, `.ogg`        | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.tbn`, `.bmp`               |
+| `.srt`, `.ass`, `.vtt`, `.sup`, `.sub` | `extrafanart/`, `extrathumbs/`, `.trickplay/`, `metadata/`, `.actors/` |
 
-Configurable via plugin settings.
+Exclusions are configurable in plugin settings.
+
+## REST API
+
+All endpoints require admin privileges (`[Authorize(Policy = "RequiresElevation")]`):
+
+| Method          | Endpoint                                           | Description                       |
+| --------------- | -------------------------------------------------- | --------------------------------- |
+| GET             | `/Polyglot/Libraries`                              | List Jellyfin libraries           |
+| GET/POST        | `/Polyglot/Alternatives`                           | List/create language alternatives |
+| DELETE          | `/Polyglot/Alternatives/{id}`                      | Delete alternative + mirrors      |
+| POST            | `/Polyglot/Alternatives/{id}/Libraries`            | Add mirror to alternative         |
+| DELETE          | `/Polyglot/Alternatives/{id}/Libraries/{sourceId}` | Delete mirror                     |
+| POST            | `/Polyglot/Alternatives/{id}/Sync`                 | Trigger sync                      |
+| GET             | `/Polyglot/Users`                                  | List users with assignments       |
+| PUT             | `/Polyglot/Users/{id}/Language`                    | Set user language                 |
+| POST            | `/Polyglot/Users/EnableAll`                        | Enable plugin for all users       |
+| GET             | `/Polyglot/LdapStatus`                             | Get LDAP integration status       |
+| GET/POST/DELETE | `/Polyglot/LdapGroups`                             | Manage LDAP mappings              |
+| POST            | `/Polyglot/TestLdap`                               | Test LDAP connection              |
+| GET             | `/Polyglot/DebugReport`                            | Generate debug report             |
+
+## Event Consumers
+
+| Consumer                 | Trigger              | Action                                                            |
+| ------------------------ | -------------------- | ----------------------------------------------------------------- |
+| `UserCreatedConsumer`    | New user created     | Check LDAP groups → assign language, or apply auto-manage default |
+| `UserDeletedConsumer`    | User deleted         | Remove from `UserLanguages` config                                |
+| `LibraryChangedConsumer` | Library item removed | Cleanup orphaned mirrors, reconcile user access                   |
+
+## Scheduled Tasks
+
+| Task                   | Default Schedule    | Purpose                                   |
+| ---------------------- | ------------------- | ----------------------------------------- |
+| `MirrorSyncTask`       | Every 6 hours       | Sync all mirrors + cleanup orphans        |
+| `MirrorPostScanTask`   | After library scans | Keep mirrors in sync with source changes  |
+| `UserLanguageSyncTask` | Daily at 3:00 AM    | Reconcile user library access permissions |
+
+## Cross-Platform Hardlinks
+
+`FileSystemHelper` uses P/Invoke for native hardlink operations:
+
+```csharp
+// Windows
+[DllImport("kernel32.dll")]
+static extern bool CreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+
+// Unix/Linux/macOS
+[DllImport("libc")]
+static extern int link(string oldpath, string newpath);
+```
+
+Same-filesystem detection is done by attempting a test hardlink (most reliable cross-platform method).
 
 ## Building
 
 ```bash
+cd Jellyfin.Plugin.Polyglot
 dotnet build --configuration Release
 # Output: bin/Release/net8.0/Jellyfin.Plugin.Polyglot.dll
 ```
@@ -91,12 +404,47 @@ dotnet build --configuration Release
 ## Testing
 
 ```bash
-cd ../Jellyfin.Plugin.Polyglot.Tests
+cd Jellyfin.Plugin.Polyglot.Tests
 dotnet test
 ```
 
-Tests use `PluginTestContext` to create a real `Plugin.Instance` with mocked dependencies. Key test categories:
+Tests use `PluginTestContext` to create a real `Plugin.Instance` with mocked Jellyfin dependencies.
 
--   **Service tests**: Unit tests for business logic
--   **Behavior tests**: End-to-end library access scenarios
--   **File operation tests**: Real filesystem hardlink tests
+### Test Categories
+
+-   **Services/**: Unit tests for business logic (MirrorService, LibraryAccessService, etc.)
+-   **Behaviors/**: End-to-end scenarios (user assignment, library access calculations)
+-   **Helpers/**: FileClassifier rules, FileSystemHelper operations
+-   **Api/**: Controller tests with mocked services
+-   **EventConsumers/**: Event handling tests
+-   **Configuration/**: Serialization and plugin lifecycle tests
+
+### Running Specific Tests
+
+```bash
+dotnet test --filter "FullyQualifiedName~MirrorServiceTests"
+dotnet test --filter "Category=Integration"
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Write tests for your changes
+4. Ensure all tests pass (`dotnet test`)
+5. Build in Release mode to catch additional warnings
+6. Submit a pull request
+
+### Code Style
+
+-   Follow existing patterns in the codebase
+-   Use `PolyglotInfo`, `PolyglotWarning`, `PolyglotError` for logging (captures to debug buffer)
+-   Add XML documentation for public APIs
+-   Keep services focused and testable
+
+### Areas for Contribution
+
+-   Additional metadata provider integrations
+-   Performance optimizations for large libraries
+-   UI/UX improvements in the config page
+-   Documentation and examples
