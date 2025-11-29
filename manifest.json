@@ -10,6 +10,14 @@
     "repositoryUrl": "https://github.com/Maronato/jellyfin-plugin-polyglot",
     "versions": [
       {
+        "version": "0.8.5.0",
+        "changelog": "## What's Changed\n\n### 🐛 Bug Fixes\n- Revert deep cloning in SaveConfiguration method\n  - Removed JSON serialization deep cloning that was causing configuration sync issues\n- Revert enhanced debug logging from PolyglotController\n  - Removed verbose debug logging with hash codes and mirror details from API endpoints\n- Restore original SaveConfiguration call in Plugin.cs\n  - Changed `UpdateConfiguration` back to `SaveConfiguration` for proper configuration handling\n- Remove basic debug logging from PolyglotController\n  - Restored original simple log messages in `GetAlternatives` and `AddLibraryMirror` methods\n\n**Full Changelog**: https://github.com/Maronato/jellyfin-plugin-polyglot/compare/v0.8.4...v0.8.5",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/Maronato/jellyfin-plugin-polyglot/releases/download/v0.8.5/polyglot_0.8.5.0.zip",
+        "checksum": "eade421ef41d7390125492442551833b",
+        "timestamp": "2025-11-29T02:13:41Z"
+      },
+      {
         "version": "0.8.4.0",
         "changelog": "## What's Changed\n\n### 🔧 Improvements\n- Enhance SaveConfiguration method with deep cloning for Jellyfin compatibility\n  - Updated the `SaveConfiguration` method to create a deep clone of the configuration using JSON serialization before updating\n  - Ensures compliance with Jellyfin's configuration API, which requires the entire configuration object to be replaced rather than modified in-place\n  - Added debug logging to track references and mirror counts before and after configuration updates, improving diagnostics\n\n**Full Changelog**: https://github.com/Maronato/jellyfin-plugin-polyglot/compare/v0.8.3...v0.8.4",
         "targetAbi": "10.10.0.0",
