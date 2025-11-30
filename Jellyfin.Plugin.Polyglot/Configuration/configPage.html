@@ -369,42 +369,95 @@
                 statusObserver: null,
 
                 // Custom API helpers for plugin-specific endpoints
+                // Helper to extract error message from various error formats
+                extractErrorMessage: function(error) {
+                    // If it's already a string, return it
+                    if (typeof error === 'string') {
+                        return error;
+                    }
+                    // Check common error properties
+                    if (error.message) {
+                        return error.message;
+                    }
+                    if (error.statusText) {
+                        return error.statusText;
+                    }
+                    // If it's an object with Error property (our API format)
+                    if (error.Error) {
+                        return error.Error;
+                    }
+                    return 'Unknown error';
+                },
+
+                // Wrapper to handle API errors and extract the response body message
+                handleApiError: function(response) {
+                    var self = this;
+                    // If response has text() method, it's a Response object
+                    if (response && typeof response.text === 'function') {
+                        return response.text().then(function(text) {
+                            // Try to parse as JSON first
+                            try {
+                                var json = JSON.parse(text);
+                                var msg = self.extractErrorMessage(json);
+                                return Promise.reject(new Error(msg));
+                            } catch (e) {
+                                // Not JSON, use the text directly
+                                return Promise.reject(new Error(text || 'Unknown error'));
+                            }
+                        });
+                    }
+                    // Otherwise extract from the error object
+                    return Promise.reject(new Error(self.extractErrorMessage(response)));
+                },
+
                 apiGet: function(endpoint) {
                     return ApiClient.getJSON(ApiClient.getUrl(endpoint));
                 },
 
                 apiPost: function(endpoint, data) {
+                    var self = this;
                     return ApiClient.fetch({
-                url: ApiClient.getUrl(endpoint),
-                type: 'POST',
+                        url: ApiClient.getUrl(endpoint),
+                        type: 'POST',
                         data: JSON.stringify(data),
                         contentType: 'application/json'
-            });
+                    }).catch(function(e) {
+                        return self.handleApiError(e);
+                    });
                 },
 
                 apiPostJson: function(endpoint, data) {
+                    var self = this;
                     return ApiClient.ajax({
                         url: ApiClient.getUrl(endpoint),
                         type: 'POST',
                         data: JSON.stringify(data),
                         contentType: 'application/json',
                         dataType: 'json'
-            });
+                    }).catch(function(e) {
+                        return self.handleApiError(e);
+                    });
                 },
 
                 apiPut: function(endpoint, data) {
+                    var self = this;
                     return ApiClient.fetch({
-                url: ApiClient.getUrl(endpoint),
-                type: 'PUT',
+                        url: ApiClient.getUrl(endpoint),
+                        type: 'PUT',
                         data: JSON.stringify(data),
                         contentType: 'application/json'
+                    }).catch(function(e) {
+                        return self.handleApiError(e);
                     });
                 },
 
                 apiDelete: function(endpoint) {
+                    var self = this;
                     return ApiClient.fetch({
                         url: ApiClient.getUrl(endpoint),
                         type: 'DELETE'
+                    }).catch(function(e) {
+                        return self.handleApiError(e);
                     });
                 },
 
