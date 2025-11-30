@@ -10,6 +10,14 @@
     "repositoryUrl": "https://github.com/Maronato/jellyfin-plugin-polyglot",
     "versions": [
       {
+        "version": "0.8.10.0",
+        "changelog": "## What's Changed\n\n### 🔧 Improvements\n- Implement logging enhancements with privacy-aware entities\n  - Introduced `ILogEntity` interface and various implementations (`LogUser`, `LogLibrary`, `LogAlternative`, etc.) for structured logging\n  - Enhanced `PolyglotLogger` to handle entity rendering for both debug and information logs\n  - Sensitive data is now automatically anonymized in logs as needed\n\n### 🔄 Refactoring\n- Updated logging methods across services to utilize new log entities, improving consistency in log messages\n- Refactored existing logging calls in event consumers and services to incorporate the new logging structure, enhancing traceability and debugging capabilities\n\n**Full Changelog**: https://github.com/Maronato/jellyfin-plugin-polyglot/compare/v0.8.9...v0.8.10",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/Maronato/jellyfin-plugin-polyglot/releases/download/v0.8.10/polyglot_0.8.10.0.zip",
+        "checksum": "8312999aa7b1bebba0bc1dfef1c665e6",
+        "timestamp": "2025-11-30T18:47:20Z"
+      },
+      {
         "version": "0.8.9.0",
         "changelog": "## What's Changed\n\n### 🔧 Improvements\n- Enhance error handling in API interactions\n  - Added methods to extract and handle error messages from various API response formats\n  - Implemented error handling in `apiPost`, `apiPostJson`, `apiPut`, and `apiDelete` methods\n  - Ensured consistent error messaging across different API calls for better debugging and user feedback\n\n### 📝 Documentation\n- Update README and code examples for Spanish language support\n  - Changed references from Portuguese to Spanish in documentation\n  - Updated language code examples from \"pt-BR\" to \"es-ES\"\n  - Adjusted configuration placeholders and descriptions to reflect Spanish language settings\n\n**Full Changelog**: https://github.com/Maronato/jellyfin-plugin-polyglot/compare/v0.8.8...v0.8.9",
         "targetAbi": "10.10.0.0",
