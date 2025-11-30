@@ -9,6 +9,10 @@ using Jellyfin.Plugin.Polyglot.Models;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
+// Aliases for log entity types
+using LogUserEntity = Jellyfin.Plugin.Polyglot.Models.LogUser;
+using LogLibraryEntity = Jellyfin.Plugin.Polyglot.Models.LogLibrary;
+
 namespace Jellyfin.Plugin.Polyglot.Services;
 
 /// <summary>
@@ -49,11 +53,13 @@ public class LibraryAccessService : ILibraryAccessService
             return;
         }
 
+        var userEntity = new LogUserEntity(userId, user.Username);
+
         // Check if user is managed by the plugin
         var userConfig = _configService.GetUserLanguage(userId);
         if (userConfig == null || !userConfig.IsPluginManaged)
         {
-            _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: User {0} is not managed by plugin", user.Username);
+            _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: User {0} is not managed by plugin", userEntity);
             return;
         }
 
@@ -96,14 +102,14 @@ public class LibraryAccessService : ILibraryAccessService
 
             _logger.PolyglotInfo(
                 "UpdateUserLibraryAccessAsync: User {0} - no mirrors configured, preserving access to {1} libraries",
-                user.Username,
+                userEntity,
                 finalLibraries.Count);
         }
         else
         {
             _logger.PolyglotInfo(
                 "UpdateUserLibraryAccessAsync: User {0} - {1} managed libraries, {2} unmanaged preserved",
-                user.Username,
+                userEntity,
                 expectedManagedLibraries.Count,
                 finalLibraries.Count - expectedManagedLibraries.Count);
         }
@@ -147,9 +153,10 @@ public class LibraryAccessService : ILibraryAccessService
             return false;
         }
 
+        var userEntity = new LogUserEntity(userId, user.Username);
         _logger.PolyglotInfo(
             "ReconcileUserAccessAsync: Reconciling user {0} - expected {1}, current {2}, EnableAllFolders={3}",
-            user.Username,
+            userEntity,
             expectedLibraries.Count,
             currentLibraries.Count,
             hasEnableAllFolders);
@@ -284,7 +291,7 @@ public class LibraryAccessService : ILibraryAccessService
 
                 _logger.PolyglotWarning(
                     "GetExpectedLibraryAccess: Mirror for source {0} was deleted. Showing source as fallback.",
-                    libraryId);
+                    new LogLibraryEntity(libraryId, library.Name));
             }
 
             yield return libraryId;
@@ -387,7 +394,8 @@ public class LibraryAccessService : ILibraryAccessService
             }
             catch (Exception ex)
             {
-                _logger.PolyglotError(ex, "EnableAllUsersAsync: Failed to enable user {0}", user.Username);
+                _logger.PolyglotError(ex, "EnableAllUsersAsync: Failed to enable user {0}",
+                    new LogUserEntity(user.Id, user.Username));
             }
         }
 
@@ -407,6 +415,8 @@ public class LibraryAccessService : ILibraryAccessService
             return;
         }
 
+        var userEntity = new LogUserEntity(userId, user.Username);
+
         // Update user config atomically - check return value to verify the update succeeded
         var updated = _configService.UpdateUserLanguage(userId, userConfig =>
         {
@@ -419,8 +429,8 @@ public class LibraryAccessService : ILibraryAccessService
         {
             // User was never in the plugin's config - this is not necessarily an error,
             // it just means they weren't being managed by the plugin
-            _logger.PolyglotDebug("DisableUserAsync: User {0} ({1}) was not in plugin config, nothing to disable",
-                userId, user.Username);
+            _logger.PolyglotDebug("DisableUserAsync: User {0} was not in plugin config, nothing to disable",
+                userEntity);
         }
 
         // Optionally restore full access (do this regardless of whether user was in config)
@@ -428,12 +438,12 @@ public class LibraryAccessService : ILibraryAccessService
         {
             user.SetPermission(PermissionKind.EnableAllFolders, true);
             await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
-            _logger.PolyglotInfo("DisableUserAsync: Restored EnableAllFolders for user {0}", user.Username);
+            _logger.PolyglotInfo("DisableUserAsync: Restored EnableAllFolders for user {0}", userEntity);
         }
 
         if (updated)
         {
-            _logger.PolyglotInfo("DisableUserAsync: Disabled plugin management for user {0}", user.Username);
+            _logger.PolyglotInfo("DisableUserAsync: Disabled plugin management for user {0}", userEntity);
         }
     }
 
@@ -447,6 +457,7 @@ public class LibraryAccessService : ILibraryAccessService
             return;
         }
 
+        var userEntity = new LogUserEntity(userId, user.Username);
         var libraryIdSet = libraryIds.ToHashSet();
         if (libraryIdSet.Count == 0)
         {
@@ -482,7 +493,7 @@ public class LibraryAccessService : ILibraryAccessService
         _logger.PolyglotInfo(
             "AddLibrariesToUserAccessAsync: Added {0} source libraries to user {1} (total: {2})",
             addedCount,
-            user.Username,
+            userEntity,
             newAccess.Count);
     }
 }

@@ -13,6 +13,12 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 
+// Aliases for log entity types to avoid conflict with model types
+using LogAlternativeEntity = Jellyfin.Plugin.Polyglot.Models.LogAlternative;
+using LogMirrorEntity = Jellyfin.Plugin.Polyglot.Models.LogMirror;
+using LogLibraryEntity = Jellyfin.Plugin.Polyglot.Models.LogLibrary;
+using LogPathEntity = Jellyfin.Plugin.Polyglot.Models.LogPath;
+
 namespace Jellyfin.Plugin.Polyglot.Services;
 
 /// <summary>
@@ -82,7 +88,8 @@ public class MirrorService : IMirrorService
         }
 
         _logger.PolyglotInfo("CreateMirrorAsync: Creating mirror for library {0} to {1}",
-            mirror.SourceLibraryName, mirror.TargetPath);
+            new LogLibraryEntity(mirror.SourceLibraryId, mirror.SourceLibraryName),
+            new LogPathEntity(mirror.TargetPath, "target"));
 
         var mirrorLock = _mirrorLocks.GetOrAdd(mirrorId, _ => new SemaphoreSlim(1, 1));
         await mirrorLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -135,7 +142,8 @@ public class MirrorService : IMirrorService
                 Directory.CreateDirectory(currentMirror.TargetPath);
                 createdTargetDirectory = true;
                 directoryWasEmpty = true; // New directory is by definition empty
-                _logger.PolyglotDebug("CreateMirrorAsync: Created target directory {0}", currentMirror.TargetPath);
+                _logger.PolyglotDebug("CreateMirrorAsync: Created target directory {0}",
+                    new LogPathEntity(currentMirror.TargetPath, "target"));
             }
             else
             {
@@ -152,7 +160,7 @@ public class MirrorService : IMirrorService
                 }
 
                 _logger.PolyglotDebug("CreateMirrorAsync: Target directory already exists {0} (empty: {1})",
-                    currentMirror.TargetPath, directoryWasEmpty);
+                    new LogPathEntity(currentMirror.TargetPath, "target"), directoryWasEmpty);
             }
 
             // Mirror each source path
@@ -202,11 +210,13 @@ public class MirrorService : IMirrorService
                     try
                     {
                         _libraryManager.RemoveVirtualFolder(failedMirror.TargetLibraryName, true);
-                        _logger.PolyglotInfo("CreateMirrorAsync: Cleaned up orphaned Jellyfin library {0} after failure", failedMirror.TargetLibraryName);
+                        _logger.PolyglotInfo("CreateMirrorAsync: Cleaned up orphaned Jellyfin library {0} after failure",
+                            new LogLibraryEntity(failedMirror.TargetLibraryId.Value, failedMirror.TargetLibraryName, isMirror: true));
                     }
                     catch (Exception cleanupEx)
                     {
-                        _logger.PolyglotWarning(cleanupEx, "CreateMirrorAsync: Failed to clean up orphaned Jellyfin library {0}", failedMirror.TargetLibraryName);
+                        _logger.PolyglotWarning(cleanupEx, "CreateMirrorAsync: Failed to clean up orphaned Jellyfin library {0}",
+                            new LogLibraryEntity(failedMirror.TargetLibraryId.Value, failedMirror.TargetLibraryName, isMirror: true));
                     }
                 }
                 else if (!string.IsNullOrEmpty(failedMirror.TargetLibraryName))
@@ -218,18 +228,19 @@ public class MirrorService : IMirrorService
 
                     if (orphanedLibrary != null)
                     {
+                        var orphanedLibraryId = Guid.TryParse(orphanedLibrary.ItemId, out var id) ? id : Guid.Empty;
                         try
                         {
                             _libraryManager.RemoveVirtualFolder(failedMirror.TargetLibraryName, true);
                             _logger.PolyglotInfo(
                                 "CreateMirrorAsync: Cleaned up orphaned Jellyfin library {0} (found by name) after failure",
-                                failedMirror.TargetLibraryName);
+                                new LogLibraryEntity(orphanedLibraryId, failedMirror.TargetLibraryName, isMirror: true));
                         }
                         catch (Exception cleanupEx)
                         {
                             _logger.PolyglotWarning(cleanupEx,
                                 "CreateMirrorAsync: Failed to clean up orphaned Jellyfin library {0} (found by name)",
-                                failedMirror.TargetLibraryName);
+                                new LogLibraryEntity(orphanedLibraryId, failedMirror.TargetLibraryName, isMirror: true));
                         }
                     }
                 }
@@ -240,17 +251,18 @@ public class MirrorService : IMirrorService
                 // a failure in an originally-empty directory must be files we created
                 if (!string.IsNullOrEmpty(failedMirror.TargetPath) && Directory.Exists(failedMirror.TargetPath))
                 {
+                    var targetPathEntity = new LogPathEntity(failedMirror.TargetPath, "target");
                     if (createdTargetDirectory)
                     {
                         // We created the directory - delete the entire directory
                         try
                         {
                             Directory.Delete(failedMirror.TargetPath, recursive: true);
-                            _logger.PolyglotInfo("CreateMirrorAsync: Cleaned up directory {0} that we created after failure", failedMirror.TargetPath);
+                            _logger.PolyglotInfo("CreateMirrorAsync: Cleaned up directory {0} that we created after failure", targetPathEntity);
                         }
                         catch (Exception cleanupEx)
                         {
-                            _logger.PolyglotWarning(cleanupEx, "CreateMirrorAsync: Failed to clean up directory {0}", failedMirror.TargetPath);
+                            _logger.PolyglotWarning(cleanupEx, "CreateMirrorAsync: Failed to clean up directory {0}", targetPathEntity);
                         }
                     }
                     else if (directoryWasEmpty)
@@ -273,19 +285,20 @@ public class MirrorService : IMirrorService
                                 }
                                 catch (Exception entryEx)
                                 {
-                                    _logger.PolyglotWarning(entryEx, "CreateMirrorAsync: Failed to clean up {0}", entry);
+                                    _logger.PolyglotWarning(entryEx, "CreateMirrorAsync: Failed to clean up {0}",
+                                        new LogPathEntity(entry, "file"));
                                 }
                             }
 
                             _logger.PolyglotInfo(
                                 "CreateMirrorAsync: Cleaned up partial mirror files in pre-existing directory {0} after failure",
-                                failedMirror.TargetPath);
+                                targetPathEntity);
                         }
                         catch (Exception cleanupEx)
                         {
                             _logger.PolyglotWarning(cleanupEx,
                                 "CreateMirrorAsync: Failed to enumerate/clean up files in {0}",
-                                failedMirror.TargetPath);
+                                targetPathEntity);
                         }
                     }
                     else
@@ -294,7 +307,7 @@ public class MirrorService : IMirrorService
                         _logger.PolyglotWarning(
                             "CreateMirrorAsync: Not cleaning up pre-existing non-empty directory {0} after failure to prevent data loss. " +
                             "Manual cleanup may be required.",
-                            failedMirror.TargetPath);
+                            targetPathEntity);
                     }
                 }
             }
@@ -335,7 +348,8 @@ public class MirrorService : IMirrorService
             throw new InvalidOperationException($"Mirror {mirrorId} not found");
         }
 
-        _logger.PolyglotInfo("SyncMirrorAsync: Syncing mirror {0} ({1})", mirrorId, mirror.SourceLibraryName);
+        _logger.PolyglotInfo("SyncMirrorAsync: Syncing mirror {0}",
+            new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName));
 
         var mirrorLock = _mirrorLocks.GetOrAdd(mirrorId, _ => new SemaphoreSlim(1, 1));
         await mirrorLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -367,7 +381,8 @@ public class MirrorService : IMirrorService
             if (!Directory.Exists(mirror.TargetPath))
             {
                 Directory.CreateDirectory(mirror.TargetPath);
-                _logger.PolyglotDebug("SyncMirrorAsync: Created target directory {0}", mirror.TargetPath);
+                _logger.PolyglotDebug("SyncMirrorAsync: Created target directory {0}",
+                    new LogPathEntity(mirror.TargetPath, "target"));
             }
 
             // Build file sets
@@ -403,7 +418,8 @@ public class MirrorService : IMirrorService
                     // File exists in both - check if modified
                     if (sourceSig.Size != targetSig.Size || sourceSig.ModifiedTicks != targetSig.ModifiedTicks)
                     {
-                        _logger.PolyglotDebug("SyncMirrorAsync: File modified: {0}", relativePath);
+                        _logger.PolyglotDebug("SyncMirrorAsync: File modified: {0}",
+                            new LogPathEntity(relativePath, "file"));
                         filesToRemove.Add(relativePath);
                         filesToAdd.Add(relativePath);
                     }
@@ -439,7 +455,8 @@ public class MirrorService : IMirrorService
                     if (File.Exists(targetFile))
                     {
                         File.Delete(targetFile);
-                        _logger.PolyglotDebug("SyncMirrorAsync: Deleted file {0}", targetFile);
+                        _logger.PolyglotDebug("SyncMirrorAsync: Deleted file {0}",
+                            new LogPathEntity(targetFile, "file"));
                     }
 
                     var dir = Path.GetDirectoryName(targetFile);
@@ -450,7 +467,8 @@ public class MirrorService : IMirrorService
                 }
                 catch (Exception ex)
                 {
-                    _logger.PolyglotWarning(ex, "SyncMirrorAsync: Failed to delete file {0}", targetFile);
+                    _logger.PolyglotWarning(ex, "SyncMirrorAsync: Failed to delete file {0}",
+                        new LogPathEntity(targetFile, "file"));
                 }
 
                 completedOperations++;
@@ -482,11 +500,13 @@ public class MirrorService : IMirrorService
                     try
                     {
                         FileSystemHelper.CreateHardLink(sourceFile, targetFile, _logger);
-                        _logger.PolyglotDebug("SyncMirrorAsync: Created hardlink for {0}", relativePath);
+                        _logger.PolyglotDebug("SyncMirrorAsync: Created hardlink for {0}",
+                            new LogPathEntity(relativePath, "file"));
                     }
                     catch (Exception ex)
                     {
-                        _logger.PolyglotWarning(ex, "SyncMirrorAsync: Failed to create hardlink for {0}", relativePath);
+                        _logger.PolyglotWarning(ex, "SyncMirrorAsync: Failed to create hardlink for {0}",
+                            new LogPathEntity(relativePath, "file"));
                     }
                 }
 
@@ -552,7 +572,8 @@ public class MirrorService : IMirrorService
             return result;
         }
 
-        _logger.PolyglotInfo("DeleteMirrorAsync: Deleting mirror {0} ({1})", mirrorId, mirror.TargetLibraryName);
+        var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
+        _logger.PolyglotInfo("DeleteMirrorAsync: Deleting mirror {0}", mirrorEntity);
 
         var mirrorLock = _mirrorLocks.GetOrAdd(mirrorId, _ => new SemaphoreSlim(1, 1));
         await mirrorLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -562,10 +583,11 @@ public class MirrorService : IMirrorService
             // Delete Jellyfin library
             if (deleteLibrary && mirror.TargetLibraryId.HasValue)
             {
+                var targetLibraryEntity = new LogLibraryEntity(mirror.TargetLibraryId.Value, mirror.TargetLibraryName, isMirror: true);
                 try
                 {
                     _libraryManager.RemoveVirtualFolder(mirror.TargetLibraryName, true);
-                    _logger.PolyglotInfo("DeleteMirrorAsync: Removed Jellyfin library {0}", mirror.TargetLibraryName);
+                    _logger.PolyglotInfo("DeleteMirrorAsync: Removed Jellyfin library {0}", targetLibraryEntity);
                     result.LibraryDeleted = true;
                 }
                 catch (Exception ex)
@@ -578,7 +600,7 @@ public class MirrorService : IMirrorService
                     {
                         _logger.PolyglotError(ex,
                             "DeleteMirrorAsync: Failed to remove Jellyfin library {0}",
-                            mirror.TargetLibraryName);
+                            targetLibraryEntity);
                         result.LibraryDeletionError = $"Failed to delete Jellyfin library '{mirror.TargetLibraryName}': {ex.Message}";
 
                         if (!forceConfigRemoval)
@@ -594,7 +616,7 @@ public class MirrorService : IMirrorService
                         // Library doesn't exist anymore - probably deleted externally
                         _logger.PolyglotDebug(
                             "DeleteMirrorAsync: RemoveVirtualFolder failed for {0} but library no longer exists",
-                            mirror.TargetLibraryName);
+                            targetLibraryEntity);
                         result.LibraryDeleted = true;
                     }
                 }
@@ -611,17 +633,18 @@ public class MirrorService : IMirrorService
             // Delete mirror files
             if (deleteFiles && Directory.Exists(mirror.TargetPath))
             {
+                var targetPathEntity = new LogPathEntity(mirror.TargetPath, "target");
                 try
                 {
                     Directory.Delete(mirror.TargetPath, true);
-                    _logger.PolyglotInfo("DeleteMirrorAsync: Deleted mirror directory {0}", mirror.TargetPath);
+                    _logger.PolyglotInfo("DeleteMirrorAsync: Deleted mirror directory {0}", targetPathEntity);
                     result.FilesDeleted = true;
                 }
                 catch (Exception ex)
                 {
                     _logger.PolyglotError(ex,
                         "DeleteMirrorAsync: Failed to delete mirror directory {0}",
-                        mirror.TargetPath);
+                        targetPathEntity);
                     result.FileDeletionError = $"Failed to delete directory '{mirror.TargetPath}': {ex.Message}";
 
                     if (!forceConfigRemoval)
@@ -686,8 +709,8 @@ public class MirrorService : IMirrorService
             return result;
         }
 
-        _logger.PolyglotInfo("SyncAllMirrorsAsync: Syncing all mirrors for alternative {0} ({1})",
-            alternativeId, alternative.Name);
+        var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
+        _logger.PolyglotInfo("SyncAllMirrorsAsync: Syncing all mirrors for alternative {0}", alternativeEntity);
 
         // Get mirror IDs (not objects) to iterate
         var mirrorIds = alternative.MirroredLibraries.Select(m => m.Id).ToList();
@@ -863,11 +886,13 @@ public class MirrorService : IMirrorService
         {
             foreach (var mirror in alternative.MirroredLibraries)
             {
+                var mirrorEntity = new LogMirrorEntity(mirror.Id, mirror.SourceLibraryName, mirror.TargetLibraryName);
+
                 if (!existingLibraryIds.Contains(mirror.SourceLibraryId))
                 {
                     _logger.PolyglotWarning(
                         "CleanupOrphanedMirrorsAsync: Source library {0} for mirror {1} no longer exists",
-                        mirror.SourceLibraryId, mirror.Id);
+                        new LogLibraryEntity(mirror.SourceLibraryId, mirror.SourceLibraryName), mirrorEntity);
 
                     mirrorsToDelete.Add((alternative.Id, mirror.Id, mirror.TargetLibraryName, mirror.SourceLibraryId, "source deleted"));
                     continue;
@@ -877,7 +902,7 @@ public class MirrorService : IMirrorService
                 {
                     _logger.PolyglotWarning(
                         "CleanupOrphanedMirrorsAsync: Target library {0} for mirror {1} no longer exists",
-                        mirror.TargetLibraryId.Value, mirror.Id);
+                        new LogLibraryEntity(mirror.TargetLibraryId.Value, mirror.TargetLibraryName, isMirror: true), mirrorEntity);
 
                     mirrorsToDelete.Add((alternative.Id, mirror.Id, mirror.TargetLibraryName, mirror.SourceLibraryId, "mirror deleted"));
                     continue;
@@ -898,7 +923,7 @@ public class MirrorService : IMirrorService
                     {
                         _logger.PolyglotWarning(
                             "CleanupOrphanedMirrorsAsync: Mirror {0} appears to be a ghost (no target library, status: {1}, age: {2})",
-                            mirror.Id, mirror.Status, mirrorAge);
+                            mirrorEntity, mirror.Status, mirrorAge);
 
                         mirrorsToDelete.Add((alternative.Id, mirror.Id, mirror.TargetLibraryName, mirror.SourceLibraryId, "ghost (failed creation)"));
                     }
@@ -912,6 +937,12 @@ public class MirrorService : IMirrorService
         // Use forceConfigRemoval=true for cleanup to ensure orphans are always removed from config
         foreach (var (alternativeId, mirrorId, mirrorName, sourceLibraryId, reason) in mirrorsToDelete)
         {
+            // Get mirror info for logging before deletion
+            var mirrorForLog = _configService.GetMirror(mirrorId);
+            var mirrorEntity = mirrorForLog != null
+                ? new LogMirrorEntity(mirrorId, mirrorForLog.SourceLibraryName, mirrorForLog.TargetLibraryName)
+                : new LogMirrorEntity(mirrorId, mirrorName, mirrorName);
+
             try
             {
                 // When source is deleted: delete the mirror's Jellyfin library and files
@@ -930,12 +961,12 @@ public class MirrorService : IMirrorService
                     result.CleanedUpMirrors.Add($"{mirrorName} ({reason}) [with warnings]");
                     if (!string.IsNullOrEmpty(deleteResult.LibraryDeletionError))
                     {
-                        _logger.PolyglotWarning("CleanupOrphanedMirrorsAsync: Library cleanup warning for {0}: {1}", mirrorName, deleteResult.LibraryDeletionError);
+                        _logger.PolyglotWarning("CleanupOrphanedMirrorsAsync: Library cleanup warning for {0}: {1}", mirrorEntity, deleteResult.LibraryDeletionError);
                     }
 
                     if (!string.IsNullOrEmpty(deleteResult.FileDeletionError))
                     {
-                        _logger.PolyglotWarning("CleanupOrphanedMirrorsAsync: File cleanup warning for {0}: {1}", mirrorName, deleteResult.FileDeletionError);
+                        _logger.PolyglotWarning("CleanupOrphanedMirrorsAsync: File cleanup warning for {0}: {1}", mirrorEntity, deleteResult.FileDeletionError);
                     }
                 }
                 else
@@ -957,11 +988,11 @@ public class MirrorService : IMirrorService
                     }
                 }
 
-                _logger.PolyglotInfo("CleanupOrphanedMirrorsAsync: Removed orphaned mirror {0} ({1})", mirrorName, reason);
+                _logger.PolyglotInfo("CleanupOrphanedMirrorsAsync: Removed orphaned mirror {0} ({1})", mirrorEntity, reason);
             }
             catch (Exception ex)
             {
-                _logger.PolyglotError(ex, "CleanupOrphanedMirrorsAsync: Failed to delete orphaned mirror {0}", mirrorId);
+                _logger.PolyglotError(ex, "CleanupOrphanedMirrorsAsync: Failed to delete orphaned mirror {0}", mirrorEntity);
                 result.FailedCleanups.Add($"{mirrorName} ({reason}): {ex.Message}");
             }
         }
@@ -1089,11 +1120,15 @@ public class MirrorService : IMirrorService
             throw new InvalidOperationException($"Alternative {alternativeId} was deleted during mirror creation");
         }
 
+        var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
+
         if (mirror == null)
         {
             _logger.PolyglotWarning("CreateJellyfinLibraryAsync: Mirror {0} not found (may have been deleted)", mirrorId);
             throw new InvalidOperationException($"Mirror {mirrorId} was deleted during library creation");
         }
+
+        var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
 
         var sourceLibrary = GetVirtualFolderById(mirror.SourceLibraryId);
         var sourceOptions = sourceLibrary?.LibraryOptions;
@@ -1167,15 +1202,16 @@ public class MirrorService : IMirrorService
         {
             // Library creation failed - could be name conflict or other Jellyfin issue
             _logger.PolyglotError(
-                "CreateJellyfinLibraryAsync: Failed to create Jellyfin library '{0}'. " +
+                "CreateJellyfinLibraryAsync: Failed to create Jellyfin library for mirror {0}. " +
                 "Library may already exist with the same name or Jellyfin rejected the request.",
-                mirror.TargetLibraryName);
+                mirrorEntity);
             throw new InvalidOperationException(
                 $"Failed to create Jellyfin library '{mirror.TargetLibraryName}'. " +
                 "The library may already exist with the same name.");
         }
 
         var targetLibraryId = Guid.Parse(createdLibrary.ItemId);
+        var targetLibraryEntity = new LogLibraryEntity(targetLibraryId, mirror.TargetLibraryName, isMirror: true);
 
         // Update mirror with target library ID atomically
         _configService.UpdateMirror(mirrorId, m => m.TargetLibraryId = targetLibraryId);
@@ -1187,8 +1223,8 @@ public class MirrorService : IMirrorService
 
         await RefreshLibraryAsync(targetLibraryId, cancellationToken).ConfigureAwait(false);
 
-        _logger.PolyglotInfo("CreateJellyfinLibraryAsync: Created Jellyfin library {0} with ID {1}",
-            mirror.TargetLibraryName, targetLibraryId);
+        _logger.PolyglotInfo("CreateJellyfinLibraryAsync: Created Jellyfin library {0}",
+            targetLibraryEntity);
     }
 
     /// <summary>

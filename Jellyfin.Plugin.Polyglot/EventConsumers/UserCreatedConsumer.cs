@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Events.Users;
 using Jellyfin.Plugin.Polyglot.Helpers;
+using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Controller.Events;
 using Microsoft.Extensions.Logging;
@@ -40,7 +41,8 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
     public async Task OnEvent(UserCreatedEventArgs eventArgs)
     {
         var user = eventArgs.Argument;
-        _logger.PolyglotInfo("UserCreatedConsumer: User created: {0} ({1})", user.Username, user.Id);
+        var userEntity = new LogUser(user.Id, user.Username);
+        _logger.PolyglotInfo("UserCreatedConsumer: User created: {0}", userEntity);
 
         var config = _configService.GetConfiguration();
         if (config == null)
@@ -68,25 +70,34 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
                         isPluginManaged: true,
                         CancellationToken.None).ConfigureAwait(false);
 
-                    // Get language name for readable logging
+                    // Get language alternative for logging
                     var alt = _configService.GetAlternative(languageId.Value);
-                    var languageName = alt?.Name ?? languageId.Value.ToString();
+                    if (alt != null)
+                    {
+                        _logger.PolyglotInfo(
+                            "UserCreatedConsumer: Assigned language {0} to new user {1} via LDAP",
+                            new LogAlternative(alt.Id, alt.Name, alt.LanguageCode),
+                            userEntity);
+                    }
+                    else
+                    {
+                        _logger.PolyglotInfo(
+                            "UserCreatedConsumer: Assigned language ID {0} to new user {1} via LDAP",
+                            languageId.Value,
+                            userEntity);
+                    }
 
-                    _logger.PolyglotInfo(
-                        "UserCreatedConsumer: Assigned language {0} to new user {1} via LDAP",
-                        languageName,
-                        user.Username);
                     return;
                 }
 
-                _logger.PolyglotDebug("UserCreatedConsumer: No LDAP group match for new user {0}", user.Username);
+                _logger.PolyglotDebug("UserCreatedConsumer: No LDAP group match for new user {0}", userEntity);
             }
             catch (Exception ex)
             {
                 // LDAP lookup failed - behavior depends on FallbackOnLdapFailure setting
                 _logger.PolyglotError(ex,
                     "UserCreatedConsumer: Failed to check LDAP for user {0}.",
-                    user.Username);
+                    userEntity);
                 ldapLookupFailed = true;
             }
         }
@@ -99,7 +110,7 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
             _logger.PolyglotWarning(
                 "UserCreatedConsumer: Skipping auto-assign for user {0} due to LDAP lookup failure. " +
                 "Set 'FallbackOnLdapFailure' to true in settings to auto-assign despite LDAP errors.",
-                user.Username);
+                userEntity);
             return;
         }
 
@@ -113,7 +124,7 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
                     _logger.PolyglotWarning(
                         "UserCreatedConsumer: LDAP lookup failed for user {0}, falling back to auto-assignment. " +
                         "Set 'FallbackOnLdapFailure' to false to require manual assignment on LDAP errors.",
-                        user.Username);
+                        userEntity);
                 }
 
                 await _userLanguageService.AssignLanguageAsync(
@@ -124,22 +135,34 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
                     isPluginManaged: true,
                     CancellationToken.None).ConfigureAwait(false);
 
-                // Get language name from fresh config lookup
-                string languageName = "Default libraries";
+                // Get language alternative from fresh config lookup
                 if (config.DefaultLanguageAlternativeId.HasValue)
                 {
                     var alt = _configService.GetAlternative(config.DefaultLanguageAlternativeId.Value);
-                    languageName = alt?.Name ?? "Unknown";
+                    if (alt != null)
+                    {
+                        _logger.PolyglotInfo(
+                            "UserCreatedConsumer: Auto-assigned {0} to new user {1}",
+                            new LogAlternative(alt.Id, alt.Name, alt.LanguageCode),
+                            userEntity);
+                    }
+                    else
+                    {
+                        _logger.PolyglotInfo(
+                            "UserCreatedConsumer: Auto-assigned default language to new user {0}",
+                            userEntity);
+                    }
                 }
-
-                _logger.PolyglotInfo(
-                    "UserCreatedConsumer: Auto-assigned {0} to new user {1}",
-                    languageName,
-                    user.Username);
+                else
+                {
+                    _logger.PolyglotInfo(
+                        "UserCreatedConsumer: Auto-assigned default libraries to new user {0}",
+                        userEntity);
+                }
             }
             catch (Exception ex)
             {
-                _logger.PolyglotError(ex, "UserCreatedConsumer: Failed to auto-assign for user {0}", user.Username);
+                _logger.PolyglotError(ex, "UserCreatedConsumer: Failed to auto-assign for user {0}", userEntity);
             }
         }
         else if (ldapLookupFailed && config.FallbackOnLdapFailure)
@@ -148,7 +171,7 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
             // Log to clarify that no assignment occurred despite the fallback setting
             _logger.PolyglotDebug(
                 "UserCreatedConsumer: User {0} was not auto-assigned because AutoManageNewUsers is disabled.",
-                user.Username);
+                userEntity);
         }
     }
 }

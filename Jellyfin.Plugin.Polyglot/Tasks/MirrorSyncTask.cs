@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Polyglot.Helpers;
+using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
@@ -99,7 +100,8 @@ public class MirrorSyncTask : IScheduledTask
                 continue;
             }
 
-            _logger.PolyglotInfo("MirrorSyncTask: Syncing mirrors for alternative: {0}", alternative.Name);
+            var alternativeEntity = new LogAlternative(alternativeId, alternative.Name, alternative.LanguageCode);
+            _logger.PolyglotInfo("MirrorSyncTask: Syncing mirrors for alternative: {0}", alternativeEntity);
 
             var altProgress = new Progress<double>(p =>
             {
@@ -114,17 +116,17 @@ public class MirrorSyncTask : IScheduledTask
 
                 if (result.Status == SyncAllStatus.AlternativeNotFound)
                 {
-                    _logger.PolyglotWarning("MirrorSyncTask: Alternative {0} was deleted during sync", alternative.Name);
+                    _logger.PolyglotWarning("MirrorSyncTask: Alternative {0} was deleted during sync", alternativeEntity);
                 }
                 else if (result.MirrorsFailed > 0)
                 {
                     _logger.PolyglotWarning("MirrorSyncTask: Alternative {0} synced with {1} failures out of {2} mirrors",
-                        alternative.Name, result.MirrorsFailed, result.TotalMirrors);
+                        alternativeEntity, result.MirrorsFailed, result.TotalMirrors);
                 }
             }
             catch (Exception ex)
             {
-                _logger.PolyglotError(ex, "MirrorSyncTask: Failed to sync alternative: {0}", alternative.Name);
+                _logger.PolyglotError(ex, "MirrorSyncTask: Failed to sync alternative: {0}", alternativeEntity);
             }
 
             completedAlternatives++;

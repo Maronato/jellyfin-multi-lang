@@ -40,16 +40,20 @@ public partial class DebugReportService : IDebugReportService
     /// Used by extension methods and other components.
     /// </summary>
     /// <param name="level">Log level.</param>
-    /// <param name="message">Log message.</param>
+    /// <param name="messageTemplate">The message template with placeholders.</param>
+    /// <param name="renderedMessage">The pre-rendered message for stdout.</param>
+    /// <param name="entities">Entity references for privacy-aware rendering.</param>
     /// <param name="exception">Optional exception message.</param>
-    public static void LogToBufferStatic(string level, string message, string? exception = null)
+    public static void LogToBufferStatic(string level, string messageTemplate, string renderedMessage, List<Models.ILogEntity> entities, string? exception = null)
     {
         var entry = new LogEntryInfo
         {
             Timestamp = DateTime.UtcNow,
             Level = level,
-            Message = SanitizeLogMessage(message),
-            Exception = exception != null ? SanitizeLogMessage(exception) : null
+            MessageTemplate = messageTemplate,
+            Message = renderedMessage,
+            Entities = entities,
+            Exception = exception
         };
 
         LogBuffer.Enqueue(entry);
@@ -59,6 +63,18 @@ public partial class DebugReportService : IDebugReportService
         {
             LogBuffer.TryDequeue(out _);
         }
+    }
+
+    /// <summary>
+    /// Static method to log to the buffer without requiring a service instance (legacy compatibility).
+    /// Used for simple string messages without entity references.
+    /// </summary>
+    /// <param name="level">Log level.</param>
+    /// <param name="message">Log message.</param>
+    /// <param name="exception">Optional exception message.</param>
+    public static void LogToBufferStatic(string level, string message, string? exception = null)
+    {
+        LogToBufferStatic(level, message, message, new List<Models.ILogEntity>(), exception);
     }
 
     /// <summary>
@@ -89,6 +105,9 @@ public partial class DebugReportService : IDebugReportService
     {
         options ??= new DebugReportOptions();
 
+        // Create shared entity counters for consistent privacy numbering across the report
+        var entityCounters = new EntityPrivacyCounters();
+
         var report = new DebugReport
         {
             GeneratedAt = DateTime.UtcNow,
@@ -99,7 +118,7 @@ public partial class DebugReportService : IDebugReportService
             UserDistribution = GetUserDistribution(options),
             Libraries = GetLibrarySummaries(options),
             OtherPlugins = GetOtherPlugins(),
-            RecentLogs = GetRecentLogs(options)
+            RecentLogs = GetRecentLogs(options, entityCounters)
         };
 
         // Add filesystem diagnostics if requested
@@ -481,29 +500,41 @@ public partial class DebugReportService : IDebugReportService
         }
     }
 
-    private static List<LogEntryInfo> GetRecentLogs(DebugReportOptions options)
+    private static List<LogEntryInfo> GetRecentLogs(DebugReportOptions options, EntityPrivacyCounters entityCounters)
     {
         var cutoff = DateTime.UtcNow - MaxLogAge;
 
         var logs = LogBuffer
             .Where(e => e.Timestamp >= cutoff)
-            .OrderByDescending(e => e.Timestamp)
+            .OrderBy(e => e.Timestamp) // Process in chronological order for consistent entity numbering
             .ToList();
 
-        // If paths are not being included, sanitize the logs
-        if (!options.IncludeFilePaths)
+        // Path sanitizer function for legacy logs without entity references
+        Func<string, string> pathSanitizer = msg => PathPattern().Replace(msg, "[path]");
+
+        // Render each log with privacy-aware entity formatting
+        var renderedLogs = new List<LogEntryInfo>(logs.Count);
+        foreach (var originalLog in logs)
         {
-            foreach (var log in logs)
+            // Clone the log entry to avoid mutating shared state in LogBuffer
+            var log = originalLog.Clone();
+
+            // Render the message using entity privacy settings
+            // Pass path sanitizer to handle legacy logs without entity references
+            log.Message = log.RenderMessage(options, entityCounters, pathSanitizer);
+
+            // Sanitize exception messages if paths should be hidden
+            if (log.Exception != null && !options.IncludeFilePaths)
             {
-                log.Message = SanitizeLogMessage(log.Message);
-                if (log.Exception != null)
-                {
-                    log.Exception = SanitizeLogMessage(log.Exception);
-                }
+                log.Exception = SanitizeErrorMessage(log.Exception);
             }
+
+            renderedLogs.Add(log);
         }
 
-        return logs;
+        // Return in reverse chronological order for display
+        renderedLogs.Reverse();
+        return renderedLogs;
     }
 
     private HashSet<Guid> GetExistingLibraryIds()
@@ -876,25 +907,8 @@ public partial class DebugReportService : IDebugReportService
         return error;
     }
 
-    private static string SanitizeLogMessage(string message)
-    {
-        // Remove file paths
-        message = PathPattern().Replace(message, "[path]");
-
-        // Remove potential usernames in common patterns
-        message = UsernamePattern().Replace(message, "$1[user]$2");
-
-        // Remove GUIDs that might be user IDs (but keep for context)
-        // We'll leave GUIDs as they're not PII on their own
-
-        return message;
-    }
-
     [GeneratedRegex(@"[A-Za-z]:\\[^\s""'<>|]+|/(?:home|Users|media|mnt|data|var)[^\s""'<>|]+", RegexOptions.IgnoreCase)]
     private static partial Regex PathPattern();
-
-    [GeneratedRegex(@"(user[_\s]*[:=]?\s*)[^\s,;]+(\s|,|;|$)", RegexOptions.IgnoreCase)]
-    private static partial Regex UsernamePattern();
 
     private static string FormatAsMarkdown(DebugReport report)
     {

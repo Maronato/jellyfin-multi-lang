@@ -1,5 +1,9 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Polyglot.Models;
 
 namespace Jellyfin.Plugin.Polyglot.Services;
 
@@ -481,7 +485,7 @@ public class PluginSummaryInfo
 }
 
 /// <summary>
-/// Log entry information.
+/// Log entry information with support for privacy-aware entity rendering.
 /// </summary>
 public class LogEntryInfo
 {
@@ -496,13 +500,174 @@ public class LogEntryInfo
     public string Level { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the message.
+    /// Gets or sets the message template with placeholders like {0}, {1}.
+    /// </summary>
+    public string MessageTemplate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the pre-rendered message for stdout (full details).
+    /// This is set at log time and includes all entity details.
     /// </summary>
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the entity references for privacy-aware rendering.
+    /// Each entity can be rendered differently based on privacy settings.
+    /// </summary>
+    public List<ILogEntity> Entities { get; set; } = new();
 
     /// <summary>
     /// Gets or sets the exception message (if any).
     /// </summary>
     public string? Exception { get; set; }
+
+    /// <summary>
+    /// Creates a shallow copy of the log entry.
+    /// Entities list is shared but immutable so shallow copy is safe for rendering.
+    /// </summary>
+    /// <returns>A new LogEntryInfo instance.</returns>
+    public LogEntryInfo Clone()
+    {
+        return new LogEntryInfo
+        {
+            Timestamp = Timestamp,
+            Level = Level,
+            MessageTemplate = MessageTemplate,
+            Message = Message,
+            Entities = Entities, // List reference copy is fine as we don't modify the list itself
+            Exception = Exception
+        };
+    }
+
+    /// <summary>
+    /// Renders the message with privacy-aware entity formatting.
+    /// </summary>
+    /// <param name="options">The debug report options controlling privacy.</param>
+    /// <param name="entityCounters">Counters for tracking entity indices across logs.</param>
+    /// <param name="pathSanitizer">Optional function to sanitize paths in messages without entities.</param>
+    /// <returns>The rendered message.</returns>
+    public string RenderMessage(DebugReportOptions options, EntityPrivacyCounters entityCounters, Func<string, string>? pathSanitizer = null)
+    {
+        if (Entities.Count == 0)
+        {
+            // No entities - apply path sanitization to the raw message if paths should be hidden
+            // This handles legacy logs created without entity references
+            if (!options.IncludeFilePaths && pathSanitizer != null)
+            {
+                return pathSanitizer(Message);
+            }
+
+            return Message;
+        }
+
+        var args = new object[Entities.Count];
+        for (int i = 0; i < Entities.Count; i++)
+        {
+            var entity = Entities[i];
+            args[i] = RenderEntity(entity, options, entityCounters);
+        }
+
+        try
+        {
+            return string.Format(CultureInfo.InvariantCulture, MessageTemplate, args);
+        }
+        catch
+        {
+            return Message; // Fallback to pre-rendered if format fails
+        }
+    }
+
+    /// <summary>
+    /// Renders a single entity based on privacy settings.
+    /// </summary>
+    private static string RenderEntity(ILogEntity entity, DebugReportOptions options, EntityPrivacyCounters counters)
+    {
+        if (entity.EntityType == LogEntityType.Value)
+        {
+            return entity.RenderFull();
+        }
+
+        var showFull = entity.EntityType switch
+        {
+            LogEntityType.User => options.IncludeUserNames,
+            LogEntityType.Library => options.IncludeLibraryNames,
+            LogEntityType.Alternative => options.IncludeLibraryNames,
+            LogEntityType.Mirror => options.IncludeLibraryNames,
+            LogEntityType.Path => options.IncludeFilePaths,
+            _ => false
+        };
+
+        if (showFull)
+        {
+            return entity.RenderFull();
+        }
+
+        var index = counters.GetOrCreateIndex(entity);
+        return entity.RenderPrivate(index);
+    }
+}
+
+/// <summary>
+/// Tracks entity indices for consistent privacy anonymization across logs.
+/// Each unique entity gets a consistent index (e.g., User_1 is always the same user).
+/// </summary>
+public class EntityPrivacyCounters
+{
+    // Separate counters for case-sensitive (paths) and case-insensitive (other) entity types
+    private readonly Dictionary<LogEntityType, Dictionary<string, int>> _caseSensitiveCounters = new();
+    private readonly Dictionary<LogEntityType, Dictionary<string, int>> _caseInsensitiveCounters = new();
+    private readonly Dictionary<LogEntityType, int> _nextIndex = new();
+
+    /// <summary>
+    /// Gets or creates a consistent index for an entity.
+    /// </summary>
+    /// <param name="entity">The entity to get an index for.</param>
+    /// <returns>The consistent index for this entity.</returns>
+    public int GetOrCreateIndex(ILogEntity entity)
+    {
+        var type = entity.EntityType;
+        var key = GetEntityKey(entity);
+
+        // Use case-sensitive comparison for paths (filesystem paths on Unix/Linux are case-sensitive)
+        // Use case-insensitive for other entities (usernames, library names are typically case-insensitive)
+        var useCaseSensitive = type == LogEntityType.Path;
+        var countersDict = useCaseSensitive ? _caseSensitiveCounters : _caseInsensitiveCounters;
+
+        if (!countersDict.TryGetValue(type, out var typeCounters))
+        {
+            var comparer = useCaseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+            typeCounters = new Dictionary<string, int>(comparer);
+            countersDict[type] = typeCounters;
+
+            if (!_nextIndex.ContainsKey(type))
+            {
+                _nextIndex[type] = 1;
+            }
+        }
+
+        if (!typeCounters.TryGetValue(key, out var index))
+        {
+            index = _nextIndex[type]++;
+            typeCounters[key] = index;
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Gets a unique key for an entity for tracking purposes.
+    /// </summary>
+    private static string GetEntityKey(ILogEntity entity)
+    {
+        return entity switch
+        {
+            LogUser u => u.Id.ToString(),
+            LogLibrary l => l.Id.ToString(),
+            LogAlternative a => a.Id.ToString(),
+            LogMirror m => m.Id.ToString(),
+            LogPath p => p.FullPath,
+            _ => entity.RenderFull()
+        };
+    }
 }
 

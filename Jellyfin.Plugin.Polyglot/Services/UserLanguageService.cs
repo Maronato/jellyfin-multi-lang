@@ -8,6 +8,10 @@ using Jellyfin.Plugin.Polyglot.Models;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
+// Aliases for log entity types
+using LogUserEntity = Jellyfin.Plugin.Polyglot.Models.LogUser;
+using LogAlternativeEntity = Jellyfin.Plugin.Polyglot.Models.LogAlternative;
+
 namespace Jellyfin.Plugin.Polyglot.Services;
 
 /// <summary>
@@ -47,17 +51,17 @@ public class UserLanguageService : IUserLanguageService
             throw new ArgumentException($"User {userId} not found", nameof(userId));
         }
 
+        var userEntity = new LogUserEntity(userId, user.Username);
+
         // Validate alternative exists if specified
-        string? alternativeName = null;
+        LanguageAlternative? alternative = null;
         if (alternativeId.HasValue)
         {
-            var alternative = _configService.GetAlternative(alternativeId.Value);
+            alternative = _configService.GetAlternative(alternativeId.Value);
             if (alternative == null)
             {
                 throw new ArgumentException($"Language alternative {alternativeId} not found", nameof(alternativeId));
             }
-
-            alternativeName = alternative.Name;
         }
 
         // Update or create user language config atomically
@@ -70,13 +74,25 @@ public class UserLanguageService : IUserLanguageService
             userConfig.SetBy = setBy;
         });
 
-        _logger.PolyglotInfo(
-            "AssignLanguageAsync: Assigned language {0} to user {1} (by: {2}, manual: {3}, managed: {4})",
-            alternativeName ?? "Default",
-            user.Username,
-            setBy,
-            manuallySet,
-            isPluginManaged);
+        if (alternative != null)
+        {
+            _logger.PolyglotInfo(
+                "AssignLanguageAsync: Assigned language {0} to user {1} (by: {2}, manual: {3}, managed: {4})",
+                new LogAlternativeEntity(alternative.Id, alternative.Name, alternative.LanguageCode),
+                userEntity,
+                setBy,
+                manuallySet,
+                isPluginManaged);
+        }
+        else
+        {
+            _logger.PolyglotInfo(
+                "AssignLanguageAsync: Assigned default language to user {0} (by: {1}, manual: {2}, managed: {3})",
+                userEntity,
+                setBy,
+                manuallySet,
+                isPluginManaged);
+        }
 
         // Update user's library access (only if managed)
         if (isPluginManaged)
@@ -108,6 +124,12 @@ public class UserLanguageService : IUserLanguageService
     {
         _logger.PolyglotDebug("ClearLanguageAsync: Clearing language for user {0}", userId);
 
+        // Get user info for logging before update
+        var user = _userManager.GetUserById(userId);
+        var userEntity = user != null
+            ? new LogUserEntity(userId, user.Username)
+            : new LogUserEntity(userId, $"[User {userId}]");
+
         var updated = _configService.UpdateUserLanguage(userId, userConfig =>
         {
             userConfig.SelectedAlternativeId = null;
@@ -117,14 +139,14 @@ public class UserLanguageService : IUserLanguageService
 
         if (updated)
         {
-            _logger.PolyglotInfo("ClearLanguageAsync: Cleared language assignment for user {0}", userId);
+            _logger.PolyglotInfo("ClearLanguageAsync: Cleared language assignment for user {0}", userEntity);
 
             // Update user's library access to show all libraries
             await _libraryAccessService.UpdateUserLibraryAccessAsync(userId, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            _logger.PolyglotDebug("ClearLanguageAsync: No language assignment found for user {0}", userId);
+            _logger.PolyglotDebug("ClearLanguageAsync: No language assignment found for user {0}", userEntity);
         }
     }
 
@@ -176,13 +198,19 @@ public class UserLanguageService : IUserLanguageService
     {
         _logger.PolyglotDebug("RemoveUser: Removing language assignment for user {0}", userId);
 
+        // User may already be deleted from Jellyfin, so use ID-based entity
+        var user = _userManager.GetUserById(userId);
+        var userEntity = user != null
+            ? new LogUserEntity(userId, user.Username)
+            : new LogUserEntity(userId, $"[Deleted User]");
+
         if (_configService.RemoveUserLanguage(userId))
         {
-            _logger.PolyglotInfo("RemoveUser: Removed language assignment for deleted user {0}", userId);
+            _logger.PolyglotInfo("RemoveUser: Removed language assignment for deleted user {0}", userEntity);
         }
         else
         {
-            _logger.PolyglotDebug("RemoveUser: No language assignment found for user {0}", userId);
+            _logger.PolyglotDebug("RemoveUser: No language assignment found for user {0}", userEntity);
         }
     }
 }

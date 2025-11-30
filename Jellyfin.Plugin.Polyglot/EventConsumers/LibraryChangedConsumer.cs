@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Polyglot.Helpers;
+using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -88,8 +89,9 @@ public class LibraryChangedConsumer : IHostedService, IDisposable
         // Check if this is a library-related folder being removed
         if (e.Item is CollectionFolder || e.Item is AggregateFolder)
         {
+            var libraryEntity = new LogLibrary(e.Item.Id, e.Item.Name);
             _logger.PolyglotDebug("LibraryChangedConsumer: Library folder removed: {0} (Type: {1})",
-                e.Item.Name, e.Item.GetType().Name);
+                libraryEntity, e.Item.GetType().Name);
 
             // Get cancellation token - if shutdown has started or CTS is null, skip scheduling
             var shutdownToken = _shutdownCts?.Token ?? CancellationToken.None;

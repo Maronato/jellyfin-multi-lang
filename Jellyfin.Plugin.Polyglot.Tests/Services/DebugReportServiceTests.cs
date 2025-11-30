@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using FluentAssertions;
 using Jellyfin.Data.Entities;
 using Jellyfin.Plugin.Polyglot.Configuration;
@@ -210,17 +211,28 @@ public class DebugReportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task LogToBuffer_SanitizesPaths()
+    public async Task LogToBuffer_WithEntities_SanitizesPathsBasedOnPrivacySettings()
     {
-        // Arrange & Act
-        _service.LogToBuffer("Error", "Failed to read /home/user/media/file.mkv");
+        // Arrange - log with a path entity
+        var pathEntity = new LogPath("/home/user/media/file.mkv", "file");
+        var entities = new List<ILogEntity> { pathEntity };
+        DebugReportService.LogToBufferStatic(
+            "Error",
+            "Failed to read {0}",
+            "Failed to read /home/user/media/file.mkv",
+            entities);
 
-        // Assert
-        var report = await _service.GenerateReportAsync();
-        // Look for the specific log entry with sanitized path
-        report.RecentLogs.Should().Contain(l => l.Message.Contains("[path]") && l.Message.Contains("Failed to read"));
-        // The original path should never appear
-        report.RecentLogs.Should().NotContain(l => l.Message.Contains("/home/user"));
+        // Act - generate report without path privacy
+        var report = await _service.GenerateReportAsync(new DebugReportOptions { IncludeFilePaths = false });
+
+        // Assert - paths should be anonymized when IncludeFilePaths is false
+        report.RecentLogs.Should().Contain(l => l.Message.Contains("[file_") && l.Message.Contains("Failed to read"));
+
+        // Act again - generate report with path privacy enabled
+        var reportWithPaths = await _service.GenerateReportAsync(new DebugReportOptions { IncludeFilePaths = true });
+
+        // Assert - paths should be shown when IncludeFilePaths is true
+        reportWithPaths.RecentLogs.Should().Contain(l => l.Message.Contains("/home/user/media/file.mkv"));
     }
 
     [Fact]

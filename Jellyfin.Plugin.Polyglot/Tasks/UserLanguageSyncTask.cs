@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Polyglot.Helpers;
+using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
@@ -94,6 +95,8 @@ public class UserLanguageSyncTask : IScheduledTask
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                var userEntity = new LogUser(user.Id, user.Username);
+
                 try
                 {
                     // Reconcile all plugin-managed users
@@ -105,13 +108,13 @@ public class UserLanguageSyncTask : IScheduledTask
                         if (wasReconciled)
                         {
                             reconciledUsers++;
-                            _logger.PolyglotInfo("UserLanguageSyncTask: Reconciled access for user {0}", user.Username);
+                            _logger.PolyglotInfo("UserLanguageSyncTask: Reconciled access for user {0}", userEntity);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.PolyglotError(ex, "UserLanguageSyncTask: Failed to reconcile user {0}", user.Username);
+                    _logger.PolyglotError(ex, "UserLanguageSyncTask: Failed to reconcile user {0}", userEntity);
                 }
 
                 processedUsers++;
