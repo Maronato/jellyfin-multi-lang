@@ -43,7 +43,8 @@ public class UserLanguageService : IUserLanguageService
     /// <inheritdoc />
     public async Task AssignLanguageAsync(Guid userId, Guid? alternativeId, string setBy, bool manuallySet = false, bool isPluginManaged = true, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("AssignLanguageAsync: Assigning language to user {0}", userId);
+        _logger.PolyglotDebug("AssignLanguageAsync: Assigning language to user {0}",
+            new LogUserEntity(userId, string.Empty));
 
         var user = _userManager.GetUserById(userId);
         if (user == null)
@@ -122,13 +123,14 @@ public class UserLanguageService : IUserLanguageService
     /// <inheritdoc />
     public async Task ClearLanguageAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("ClearLanguageAsync: Clearing language for user {0}", userId);
+        _logger.PolyglotDebug("ClearLanguageAsync: Clearing language for user {0}",
+            new LogUserEntity(userId, string.Empty));
 
         // Get user info for logging before update
         var user = _userManager.GetUserById(userId);
         var userEntity = user != null
             ? new LogUserEntity(userId, user.Username)
-            : new LogUserEntity(userId, $"[User {userId}]");
+            : new LogUserEntity(userId, string.Empty);
 
         var updated = _configService.UpdateUserLanguage(userId, userConfig =>
         {
@@ -196,13 +198,14 @@ public class UserLanguageService : IUserLanguageService
     /// <inheritdoc />
     public void RemoveUser(Guid userId)
     {
-        _logger.PolyglotDebug("RemoveUser: Removing language assignment for user {0}", userId);
+        _logger.PolyglotDebug("RemoveUser: Removing language assignment for user {0}",
+            new LogUserEntity(userId, string.Empty));
 
         // User may already be deleted from Jellyfin, so use ID-based entity
         var user = _userManager.GetUserById(userId);
         var userEntity = user != null
             ? new LogUserEntity(userId, user.Username)
-            : new LogUserEntity(userId, $"[Deleted User]");
+            : new LogUserEntity(userId, string.Empty);
 
         if (_configService.RemoveUserLanguage(userId))
         {

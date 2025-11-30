@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.Polyglot.Configuration;
 using Jellyfin.Plugin.Polyglot.Helpers;
+using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
@@ -101,10 +102,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
             foreach (var mirror in mirrorIds)
             {
+                var mirrorEntity = new LogMirror(mirror.Id, string.Empty, mirror.TargetLibraryName);
                 try
                 {
-                    _logger.PolyglotDebug("Plugin OnUninstalling: Deleting mirror {0} ({1})",
-                        mirror.Id, mirror.TargetLibraryName);
+                    _logger.PolyglotDebug("Plugin OnUninstalling: Deleting mirror {0}", mirrorEntity);
 
                     // Use forceConfigRemoval=true during uninstall to ensure cleanup completes
                     var result = mirrorService
@@ -115,12 +116,12 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                     if (result.HasErrors)
                     {
                         _logger.PolyglotWarning("Plugin OnUninstalling: Mirror {0} removed with errors: {1} {2}",
-                            mirror.Id, result.LibraryDeletionError, result.FileDeletionError);
+                            mirrorEntity, result.LibraryDeletionError, result.FileDeletionError);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.PolyglotWarning(ex, "Plugin OnUninstalling: Failed to delete mirror {0}", mirror.Id);
+                    _logger.PolyglotWarning(ex, "Plugin OnUninstalling: Failed to delete mirror {0}", mirrorEntity);
                 }
             }
 

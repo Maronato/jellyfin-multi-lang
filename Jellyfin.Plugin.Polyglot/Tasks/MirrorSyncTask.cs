@@ -95,7 +95,8 @@ public class MirrorSyncTask : IScheduledTask
             var alternative = _configService.GetAlternative(alternativeId);
             if (alternative == null)
             {
-                _logger.PolyglotDebug("MirrorSyncTask: Alternative {0} no longer exists, skipping", alternativeId);
+                _logger.PolyglotDebug("MirrorSyncTask: Alternative {0} no longer exists, skipping",
+                    new LogAlternative(alternativeId, string.Empty, string.Empty));
                 completedAlternatives++;
                 continue;
             }

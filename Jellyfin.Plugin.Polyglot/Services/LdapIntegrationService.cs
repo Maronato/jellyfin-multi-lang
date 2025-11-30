@@ -5,9 +5,13 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Polyglot.Helpers;
+using Jellyfin.Plugin.Polyglot.Models;
 using MediaBrowser.Common.Plugins;
 using Microsoft.Extensions.Logging;
 using Novell.Directory.Ldap;
+
+// Aliases for log entity types
+using LogUserEntity = Jellyfin.Plugin.Polyglot.Models.LogUser;
 
 namespace Jellyfin.Plugin.Polyglot.Services;
 
@@ -107,7 +111,8 @@ public class LdapIntegrationService : ILdapIntegrationService
         }
         catch (Exception ex)
         {
-            _logger.PolyglotError(ex, "Failed to query LDAP groups for user {0}", username);
+            _logger.PolyglotError(ex, "Failed to query LDAP groups for user {0}",
+                new LogUserEntity(Guid.Empty, username));
             return Enumerable.Empty<string>();
         }
     }
@@ -152,9 +157,8 @@ public class LdapIntegrationService : ILdapIntegrationService
 
         var bestMatch = matchingMappings.First();
         _logger.PolyglotDebug(
-            "User {0} matched LDAP group {1} with priority {2}",
-            username,
-            bestMatch.LdapGroupDn,
+            "User {0} matched LDAP group with priority {1}",
+            new LogUserEntity(Guid.Empty, username),
             bestMatch.Priority);
 
         return bestMatch.LanguageAlternativeId;

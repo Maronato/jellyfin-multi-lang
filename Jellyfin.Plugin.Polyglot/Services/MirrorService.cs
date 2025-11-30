@@ -54,17 +54,21 @@ public class MirrorService : IMirrorService
     /// <inheritdoc />
     public async Task CreateMirrorAsync(Guid alternativeId, Guid mirrorId, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("CreateMirrorAsync: Starting for alternative {0}, mirror {1}", alternativeId, mirrorId);
+        _logger.PolyglotDebug("CreateMirrorAsync: Starting for alternative {0}, mirror {1}",
+            new LogAlternativeEntity(alternativeId, string.Empty, string.Empty),
+            new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
 
         // Get fresh snapshot of mirror data for the operation
         var mirrorData = _configService.GetMirrorWithAlternative(mirrorId);
         if (mirrorData == null)
         {
-            _logger.PolyglotWarning("CreateMirrorAsync: Mirror {0} not found in configuration", mirrorId);
+            _logger.PolyglotWarning("CreateMirrorAsync: Mirror {0} not found in configuration",
+                new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
             throw new InvalidOperationException($"Mirror {mirrorId} not found in configuration");
         }
 
         var (mirror, actualAlternativeId) = mirrorData.Value;
+        var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
 
         // Validate the provided alternativeId matches the mirror's actual parent
         // Throw if mismatched to expose programming errors in callers rather than silently correcting
@@ -73,7 +77,9 @@ public class MirrorService : IMirrorService
             _logger.PolyglotError(
                 "CreateMirrorAsync: Mirror {0} belongs to alternative {1}, not provided alternative {2}. " +
                 "This indicates a programming error in the caller.",
-                mirrorId, actualAlternativeId, alternativeId);
+                mirrorEntity,
+                new LogAlternativeEntity(actualAlternativeId, string.Empty, string.Empty),
+                new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
             throw new ArgumentException(
                 $"Mirror {mirrorId} belongs to alternative {actualAlternativeId}, not {alternativeId}. " +
                 "This indicates a programming error - the caller provided an incorrect alternative ID.",
@@ -83,7 +89,8 @@ public class MirrorService : IMirrorService
         var alternative = _configService.GetAlternative(alternativeId);
         if (alternative == null)
         {
-            _logger.PolyglotWarning("CreateMirrorAsync: Alternative {0} not found", alternativeId);
+            _logger.PolyglotWarning("CreateMirrorAsync: Alternative {0} not found",
+                new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
             throw new InvalidOperationException($"Alternative {alternativeId} not found");
         }
 
@@ -193,7 +200,8 @@ public class MirrorService : IMirrorService
         }
         catch (Exception ex)
         {
-            _logger.PolyglotError(ex, "CreateMirrorAsync: Failed to create mirror for {0}", mirrorId);
+            _logger.PolyglotError(ex, "CreateMirrorAsync: Failed to create mirror for {0}",
+                new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName));
 
             // Clean up any orphaned resources that may have been created before the failure
             // Re-fetch to get the current state (may have been set even if later steps failed)
@@ -324,7 +332,7 @@ public class MirrorService : IMirrorService
             {
                 _logger.PolyglotWarning(
                     "CreateMirrorAsync: Could not update error status for mirror {0} (mirror may have been deleted)",
-                    mirrorId);
+                    new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName));
             }
 
             throw;
@@ -338,13 +346,15 @@ public class MirrorService : IMirrorService
     /// <inheritdoc />
     public async Task SyncMirrorAsync(Guid mirrorId, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("SyncMirrorAsync: Starting for mirror {0}", mirrorId);
+        _logger.PolyglotDebug("SyncMirrorAsync: Starting for mirror {0}",
+            new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
 
         // Get fresh snapshot of mirror data
         var mirror = _configService.GetMirror(mirrorId);
         if (mirror == null)
         {
-            _logger.PolyglotWarning("SyncMirrorAsync: Mirror {0} not found", mirrorId);
+            _logger.PolyglotWarning("SyncMirrorAsync: Mirror {0} not found",
+                new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
             throw new InvalidOperationException($"Mirror {mirrorId} not found");
         }
 
@@ -530,7 +540,8 @@ public class MirrorService : IMirrorService
         }
         catch (Exception ex)
         {
-            _logger.PolyglotError(ex, "SyncMirrorAsync: Failed to sync mirror {0}", mirrorId);
+            var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
+            _logger.PolyglotError(ex, "SyncMirrorAsync: Failed to sync mirror {0}", mirrorEntity);
 
             // Update mirror with error status atomically
             // Log if this fails (mirror may have been deleted), but still re-throw original exception
@@ -544,7 +555,7 @@ public class MirrorService : IMirrorService
             {
                 _logger.PolyglotWarning(
                     "SyncMirrorAsync: Could not update error status for mirror {0} (mirror may have been deleted)",
-                    mirrorId);
+                    mirrorEntity);
             }
 
             throw;
@@ -559,7 +570,7 @@ public class MirrorService : IMirrorService
     public async Task<DeleteMirrorResult> DeleteMirrorAsync(Guid mirrorId, bool deleteLibrary = true, bool deleteFiles = true, bool forceConfigRemoval = false, CancellationToken cancellationToken = default)
     {
         _logger.PolyglotDebug("DeleteMirrorAsync: Starting for mirror {0} (deleteLibrary: {1}, deleteFiles: {2}, forceConfigRemoval: {3})",
-            mirrorId, deleteLibrary, deleteFiles, forceConfigRemoval);
+            new LogMirrorEntity(mirrorId, string.Empty, string.Empty), deleteLibrary, deleteFiles, forceConfigRemoval);
 
         var result = new DeleteMirrorResult();
 
@@ -567,7 +578,8 @@ public class MirrorService : IMirrorService
         var mirror = _configService.GetMirror(mirrorId);
         if (mirror == null)
         {
-            _logger.PolyglotWarning("DeleteMirrorAsync: Mirror {0} not found, nothing to delete", mirrorId);
+            _logger.PolyglotWarning("DeleteMirrorAsync: Mirror {0} not found, nothing to delete",
+                new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
             result.RemovedFromConfig = true; // Already gone
             return result;
         }
@@ -669,7 +681,7 @@ public class MirrorService : IMirrorService
             // With forceConfigRemoval, we always remove even if above operations failed
             _configService.RemoveMirror(mirrorId);
             result.RemovedFromConfig = true;
-            _logger.PolyglotDebug("DeleteMirrorAsync: Removed mirror {0} from configuration", mirrorId);
+            _logger.PolyglotDebug("DeleteMirrorAsync: Removed mirror {0} from configuration", mirrorEntity);
 
             _mirrorLocks.TryRemove(mirrorId, out _);
 
@@ -678,11 +690,11 @@ public class MirrorService : IMirrorService
                 _logger.PolyglotWarning(
                     "DeleteMirrorAsync: Completed for mirror {0} with errors (forceConfigRemoval was used). " +
                     "LibraryError: {1}, FileError: {2}",
-                    mirrorId, result.LibraryDeletionError ?? "none", result.FileDeletionError ?? "none");
+                    mirrorEntity, result.LibraryDeletionError ?? "none", result.FileDeletionError ?? "none");
             }
             else
             {
-                _logger.PolyglotDebug("DeleteMirrorAsync: Completed successfully for mirror {0}", mirrorId);
+                _logger.PolyglotDebug("DeleteMirrorAsync: Completed successfully for mirror {0}", mirrorEntity);
             }
 
             return result;
@@ -696,7 +708,8 @@ public class MirrorService : IMirrorService
     /// <inheritdoc />
     public async Task<SyncAllResult> SyncAllMirrorsAsync(Guid alternativeId, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("SyncAllMirrorsAsync: Starting for alternative {0}", alternativeId);
+        _logger.PolyglotDebug("SyncAllMirrorsAsync: Starting for alternative {0}",
+            new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
 
         var result = new SyncAllResult();
 
@@ -704,7 +717,8 @@ public class MirrorService : IMirrorService
         var alternative = _configService.GetAlternative(alternativeId);
         if (alternative == null)
         {
-            _logger.PolyglotWarning("SyncAllMirrorsAsync: Alternative {0} not found", alternativeId);
+            _logger.PolyglotWarning("SyncAllMirrorsAsync: Alternative {0} not found",
+                new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
             result.Status = SyncAllStatus.AlternativeNotFound;
             return result;
         }
@@ -741,13 +755,15 @@ public class MirrorService : IMirrorService
             }
             catch (OperationCanceledException)
             {
-                _logger.PolyglotInfo("SyncAllMirrorsAsync: Cancelled during mirror {0}", mirrorId);
+                _logger.PolyglotInfo("SyncAllMirrorsAsync: Cancelled during mirror {0}",
+                    new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
                 result.Status = SyncAllStatus.Cancelled;
                 return result;
             }
             catch (Exception ex)
             {
-                _logger.PolyglotError(ex, "SyncAllMirrorsAsync: Failed to sync mirror {0}", mirrorId);
+                _logger.PolyglotError(ex, "SyncAllMirrorsAsync: Failed to sync mirror {0}",
+                    new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
                 result.MirrorsFailed++;
                 // Continue with other mirrors
             }
@@ -756,7 +772,7 @@ public class MirrorService : IMirrorService
         result.Status = result.MirrorsFailed > 0 ? SyncAllStatus.CompletedWithErrors : SyncAllStatus.Completed;
 
         _logger.PolyglotInfo("SyncAllMirrorsAsync: Completed for alternative {0} - {1} synced, {2} failed",
-            alternativeId, result.MirrorsSynced, result.MirrorsFailed);
+            alternativeEntity, result.MirrorsSynced, result.MirrorsFailed);
 
         return result;
     }
@@ -984,7 +1000,8 @@ public class MirrorService : IMirrorService
                     if (!sourceHasOtherMirrors && existingLibraryIds.Contains(sourceLibraryId))
                     {
                         result.SourcesWithoutMirrors.Add(sourceLibraryId);
-                        _logger.PolyglotInfo("CleanupOrphanedMirrorsAsync: Source library {0} has no more mirrors", sourceLibraryId);
+                        _logger.PolyglotInfo("CleanupOrphanedMirrorsAsync: Source library {0} has no more mirrors",
+                            new LogLibraryEntity(sourceLibraryId, mirrorName));
                     }
                 }
 
@@ -1108,7 +1125,8 @@ public class MirrorService : IMirrorService
     /// <exception cref="InvalidOperationException">Thrown if alternative or mirror is not found (e.g., deleted concurrently).</exception>
     private async Task CreateJellyfinLibraryAsync(Guid alternativeId, Guid mirrorId, CancellationToken cancellationToken)
     {
-        _logger.PolyglotDebug("CreateJellyfinLibraryAsync: Creating library for mirror {0}", mirrorId);
+        _logger.PolyglotDebug("CreateJellyfinLibraryAsync: Creating library for mirror {0}",
+            new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
 
         // Get fresh data
         var alternative = _configService.GetAlternative(alternativeId);
@@ -1116,7 +1134,8 @@ public class MirrorService : IMirrorService
 
         if (alternative == null)
         {
-            _logger.PolyglotWarning("CreateJellyfinLibraryAsync: Alternative {0} not found (may have been deleted)", alternativeId);
+            _logger.PolyglotWarning("CreateJellyfinLibraryAsync: Alternative {0} not found (may have been deleted)",
+                new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
             throw new InvalidOperationException($"Alternative {alternativeId} was deleted during mirror creation");
         }
 
@@ -1124,7 +1143,8 @@ public class MirrorService : IMirrorService
 
         if (mirror == null)
         {
-            _logger.PolyglotWarning("CreateJellyfinLibraryAsync: Mirror {0} not found (may have been deleted)", mirrorId);
+            _logger.PolyglotWarning("CreateJellyfinLibraryAsync: Mirror {0} not found (may have been deleted)",
+                new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
             throw new InvalidOperationException($"Mirror {mirrorId} was deleted during library creation");
         }
 
@@ -1232,7 +1252,8 @@ public class MirrorService : IMirrorService
     /// </summary>
     private Task RefreshLibraryAsync(Guid libraryId, CancellationToken cancellationToken)
     {
-        _logger.PolyglotDebug("RefreshLibraryAsync: Queueing refresh for {0}", libraryId);
+        var libraryEntity = new LogLibraryEntity(libraryId, string.Empty, isMirror: true);
+        _logger.PolyglotDebug("RefreshLibraryAsync: Queueing refresh for {0}", libraryEntity);
 
         try
         {
@@ -1248,11 +1269,11 @@ public class MirrorService : IMirrorService
             };
 
             _providerManager.QueueRefresh(libraryId, refreshOptions, RefreshPriority.Low);
-            _logger.PolyglotInfo("RefreshLibraryAsync: Queued library refresh for {0}", libraryId);
+            _logger.PolyglotInfo("RefreshLibraryAsync: Queued library refresh for {0}", libraryEntity);
         }
         catch (Exception ex)
         {
-            _logger.PolyglotWarning(ex, "RefreshLibraryAsync: Failed to queue refresh for {0}", libraryId);
+            _logger.PolyglotWarning(ex, "RefreshLibraryAsync: Failed to queue refresh for {0}", libraryEntity);
         }
 
         return Task.CompletedTask;

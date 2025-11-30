@@ -6,6 +6,11 @@ using Jellyfin.Plugin.Polyglot.Helpers;
 using Jellyfin.Plugin.Polyglot.Models;
 using Microsoft.Extensions.Logging;
 
+// Aliases for log entity types to avoid conflict with model types
+using LogAlternativeEntity = Jellyfin.Plugin.Polyglot.Models.LogAlternative;
+using LogMirrorEntity = Jellyfin.Plugin.Polyglot.Models.LogMirror;
+using LogUserEntity = Jellyfin.Plugin.Polyglot.Models.LogUser;
+
 namespace Jellyfin.Plugin.Polyglot.Services;
 
 /// <summary>
@@ -90,11 +95,13 @@ public class ConfigurationService : IConfigurationService
 
             if (mirror == null)
             {
-                _logger.PolyglotDebug("UpdateMirror: Mirror {0} not found", mirrorId);
+                _logger.PolyglotDebug("UpdateMirror: Mirror {0} not found",
+                    new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
                 return false;
             }
 
-            _logger.PolyglotDebug("UpdateMirror: Applying update to mirror {0} ({1})", mirrorId, mirror.TargetLibraryName);
+            var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
+            _logger.PolyglotDebug("UpdateMirror: Applying update to mirror {0}", mirrorEntity);
 
             // Apply change
             update(mirror);
@@ -102,7 +109,7 @@ public class ConfigurationService : IConfigurationService
             // Save immediately
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotDebug("UpdateMirror: Saved configuration after updating mirror {0}", mirrorId);
+            _logger.PolyglotDebug("UpdateMirror: Saved configuration after updating mirror {0}", mirrorEntity);
             return true;
         }
     }
@@ -123,26 +130,30 @@ public class ConfigurationService : IConfigurationService
             var alternative = config.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId);
             if (alternative == null)
             {
-                _logger.PolyglotWarning("AddMirror: Alternative {0} not found", alternativeId);
+                _logger.PolyglotWarning("AddMirror: Alternative {0} not found",
+                    new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
                 return false;
             }
+
+            var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
 
             // Atomic duplicate check - prevents race conditions where two threads
             // could both pass an earlier check and both add mirrors for the same source
             if (alternative.MirroredLibraries.Any(m => m.SourceLibraryId == mirror.SourceLibraryId))
             {
                 _logger.PolyglotWarning("AddMirror: Duplicate mirror for source library {0} already exists in alternative {1}",
-                    mirror.SourceLibraryId, alternative.Name);
+                    new LogMirrorEntity(mirror.Id, mirror.SourceLibraryName, string.Empty), alternativeEntity);
                 return false;
             }
 
-            _logger.PolyglotDebug("AddMirror: Adding mirror {0} ({1}) to alternative {2}",
-                mirror.Id, mirror.TargetLibraryName, alternative.Name);
+            var mirrorEntity = new LogMirrorEntity(mirror.Id, mirror.SourceLibraryName, mirror.TargetLibraryName);
+            _logger.PolyglotDebug("AddMirror: Adding mirror {0} to alternative {1}",
+                mirrorEntity, alternativeEntity);
 
             alternative.MirroredLibraries.Add(mirror);
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotInfo("AddMirror: Added mirror {0} to alternative {1}", mirror.Id, alternative.Name);
+            _logger.PolyglotInfo("AddMirror: Added mirror {0} to alternative {1}", mirrorEntity, alternativeEntity);
             return true;
         }
     }
@@ -164,18 +175,21 @@ public class ConfigurationService : IConfigurationService
                 var mirror = alternative.MirroredLibraries.FirstOrDefault(m => m.Id == mirrorId);
                 if (mirror != null)
                 {
-                    _logger.PolyglotDebug("RemoveMirror: Removing mirror {0} ({1}) from alternative {2}",
-                        mirrorId, mirror.TargetLibraryName, alternative.Name);
+                    var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
+                    var alternativeEntity = new LogAlternativeEntity(alternative.Id, alternative.Name, alternative.LanguageCode);
+                    _logger.PolyglotDebug("RemoveMirror: Removing mirror {0} from alternative {1}",
+                        mirrorEntity, alternativeEntity);
 
                     alternative.MirroredLibraries.Remove(mirror);
                     Plugin.Instance?.SaveConfiguration();
 
-                    _logger.PolyglotInfo("RemoveMirror: Removed mirror {0} from alternative {1}", mirrorId, alternative.Name);
+                    _logger.PolyglotInfo("RemoveMirror: Removed mirror {0} from alternative {1}", mirrorEntity, alternativeEntity);
                     return true;
                 }
             }
 
-            _logger.PolyglotDebug("RemoveMirror: Mirror {0} not found", mirrorId);
+            _logger.PolyglotDebug("RemoveMirror: Mirror {0} not found",
+                new LogMirrorEntity(mirrorId, string.Empty, string.Empty));
             return false;
         }
     }
@@ -226,11 +240,13 @@ public class ConfigurationService : IConfigurationService
             var alternative = config.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId);
             if (alternative == null)
             {
-                _logger.PolyglotDebug("UpdateAlternative: Alternative {0} not found", alternativeId);
+                _logger.PolyglotDebug("UpdateAlternative: Alternative {0} not found",
+                    new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
                 return false;
             }
 
-            _logger.PolyglotDebug("UpdateAlternative: Applying update to alternative {0} ({1})", alternativeId, alternative.Name);
+            var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
+            _logger.PolyglotDebug("UpdateAlternative: Applying update to alternative {0}", alternativeEntity);
 
             // Apply change
             update(alternative);
@@ -239,7 +255,7 @@ public class ConfigurationService : IConfigurationService
             // Save immediately
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotDebug("UpdateAlternative: Saved configuration after updating alternative {0}", alternativeId);
+            _logger.PolyglotDebug("UpdateAlternative: Saved configuration after updating alternative {0}", alternativeEntity);
             return true;
         }
     }
@@ -260,16 +276,18 @@ public class ConfigurationService : IConfigurationService
             // could both pass an earlier check and both add alternatives with the same name
             if (config.LanguageAlternatives.Any(a => string.Equals(a.Name, alternative.Name, StringComparison.OrdinalIgnoreCase)))
             {
-                _logger.PolyglotWarning("AddAlternative: Duplicate name '{0}' already exists", alternative.Name);
+                _logger.PolyglotWarning("AddAlternative: Duplicate name already exists for alternative {0}",
+                    new LogAlternativeEntity(alternative.Id, alternative.Name, alternative.LanguageCode));
                 return false;
             }
 
-            _logger.PolyglotDebug("AddAlternative: Adding alternative {0} ({1})", alternative.Id, alternative.Name);
+            var alternativeEntity = new LogAlternativeEntity(alternative.Id, alternative.Name, alternative.LanguageCode);
+            _logger.PolyglotDebug("AddAlternative: Adding alternative {0}", alternativeEntity);
 
             config.LanguageAlternatives.Add(alternative);
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotInfo("AddAlternative: Added alternative {0} ({1})", alternative.Id, alternative.Name);
+            _logger.PolyglotInfo("AddAlternative: Added alternative {0}", alternativeEntity);
             return true;
         }
     }
@@ -289,11 +307,13 @@ public class ConfigurationService : IConfigurationService
             var alternative = config.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId);
             if (alternative == null)
             {
-                _logger.PolyglotDebug("RemoveAlternative: Alternative {0} not found", alternativeId);
+                _logger.PolyglotDebug("RemoveAlternative: Alternative {0} not found",
+                    new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
                 return false;
             }
 
-            _logger.PolyglotDebug("RemoveAlternative: Removing alternative {0} ({1})", alternativeId, alternative.Name);
+            var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
+            _logger.PolyglotDebug("RemoveAlternative: Removing alternative {0}", alternativeEntity);
 
             config.LanguageAlternatives.Remove(alternative);
 
@@ -301,7 +321,7 @@ public class ConfigurationService : IConfigurationService
             // This prevents dangling references that would cause new user assignment failures
             if (config.DefaultLanguageAlternativeId == alternativeId)
             {
-                _logger.PolyglotInfo("RemoveAlternative: Clearing DefaultLanguageAlternativeId (was pointing to deleted alternative {0})", alternativeId);
+                _logger.PolyglotInfo("RemoveAlternative: Clearing DefaultLanguageAlternativeId (was pointing to deleted alternative {0})", alternativeEntity);
                 config.DefaultLanguageAlternativeId = null;
             }
 
@@ -309,12 +329,12 @@ public class ConfigurationService : IConfigurationService
             var removedMappings = config.LdapGroupMappings.RemoveAll(m => m.LanguageAlternativeId == alternativeId);
             if (removedMappings > 0)
             {
-                _logger.PolyglotInfo("RemoveAlternative: Removed {0} LDAP group mapping(s) that referenced deleted alternative {1}", removedMappings, alternativeId);
+                _logger.PolyglotInfo("RemoveAlternative: Removed {0} LDAP group mapping(s) that referenced deleted alternative {1}", removedMappings, alternativeEntity);
             }
 
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotInfo("RemoveAlternative: Removed alternative {0}", alternativeId);
+            _logger.PolyglotInfo("RemoveAlternative: Removed alternative {0}", alternativeEntity);
             return true;
         }
     }
@@ -334,9 +354,12 @@ public class ConfigurationService : IConfigurationService
             var alternative = config.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId);
             if (alternative == null)
             {
-                _logger.PolyglotDebug("TryRemoveAlternativeAtomic: Alternative {0} not found", alternativeId);
+                _logger.PolyglotDebug("TryRemoveAlternativeAtomic: Alternative {0} not found",
+                    new LogAlternativeEntity(alternativeId, string.Empty, string.Empty));
                 return RemoveAlternativeResult.NotFound();
             }
+
+            var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
 
             // Check for unexpected mirrors (new mirrors added during deletion)
             var currentMirrorIds = alternative.MirroredLibraries.Select(m => m.Id).ToHashSet();
@@ -346,11 +369,11 @@ public class ConfigurationService : IConfigurationService
             {
                 _logger.PolyglotWarning(
                     "TryRemoveAlternativeAtomic: {0} new mirrors were added during deletion of alternative {1}. Aborting.",
-                    unexpectedMirrorIds.Count, alternativeId);
+                    unexpectedMirrorIds.Count, alternativeEntity);
                 return RemoveAlternativeResult.NewMirrorsFound(unexpectedMirrorIds);
             }
 
-            _logger.PolyglotDebug("TryRemoveAlternativeAtomic: Removing alternative {0} ({1})", alternativeId, alternative.Name);
+            _logger.PolyglotDebug("TryRemoveAlternativeAtomic: Removing alternative {0}", alternativeEntity);
 
             config.LanguageAlternatives.Remove(alternative);
 
@@ -358,7 +381,7 @@ public class ConfigurationService : IConfigurationService
             // This prevents dangling references that would cause new user assignment failures
             if (config.DefaultLanguageAlternativeId == alternativeId)
             {
-                _logger.PolyglotInfo("TryRemoveAlternativeAtomic: Clearing DefaultLanguageAlternativeId (was pointing to deleted alternative {0})", alternativeId);
+                _logger.PolyglotInfo("TryRemoveAlternativeAtomic: Clearing DefaultLanguageAlternativeId (was pointing to deleted alternative {0})", alternativeEntity);
                 config.DefaultLanguageAlternativeId = null;
             }
 
@@ -366,12 +389,12 @@ public class ConfigurationService : IConfigurationService
             var removedMappings = config.LdapGroupMappings.RemoveAll(m => m.LanguageAlternativeId == alternativeId);
             if (removedMappings > 0)
             {
-                _logger.PolyglotInfo("TryRemoveAlternativeAtomic: Removed {0} LDAP group mapping(s) that referenced deleted alternative {1}", removedMappings, alternativeId);
+                _logger.PolyglotInfo("TryRemoveAlternativeAtomic: Removed {0} LDAP group mapping(s) that referenced deleted alternative {1}", removedMappings, alternativeEntity);
             }
 
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotInfo("TryRemoveAlternativeAtomic: Removed alternative {0}", alternativeId);
+            _logger.PolyglotInfo("TryRemoveAlternativeAtomic: Removed alternative {0}", alternativeEntity);
             return RemoveAlternativeResult.Succeeded();
         }
     }
@@ -422,15 +445,16 @@ public class ConfigurationService : IConfigurationService
             var userConfig = config.UserLanguages.FirstOrDefault(u => u.UserId == userId);
             bool isNew = userConfig == null;
 
+            var userEntity = new LogUserEntity(userId, string.Empty);
             if (isNew)
             {
                 userConfig = new UserLanguageConfig { UserId = userId };
                 config.UserLanguages.Add(userConfig);
-                _logger.PolyglotDebug("UpdateOrCreateUserLanguage: Created new config for user {0}", userId);
+                _logger.PolyglotDebug("UpdateOrCreateUserLanguage: Created new config for user {0}", userEntity);
             }
             else
             {
-                _logger.PolyglotDebug("UpdateOrCreateUserLanguage: Updating existing config for user {0}", userId);
+                _logger.PolyglotDebug("UpdateOrCreateUserLanguage: Updating existing config for user {0}", userEntity);
             }
 
             // Apply change
@@ -439,7 +463,7 @@ public class ConfigurationService : IConfigurationService
             // Save immediately
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotDebug("UpdateOrCreateUserLanguage: Saved configuration for user {0} (new: {1})", userId, isNew);
+            _logger.PolyglotDebug("UpdateOrCreateUserLanguage: Saved configuration for user {0} (new: {1})", userEntity, isNew);
             return isNew;
         }
     }
@@ -458,13 +482,14 @@ public class ConfigurationService : IConfigurationService
 
             // Fresh lookup
             var userConfig = config.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            var userEntity = new LogUserEntity(userId, string.Empty);
             if (userConfig == null)
             {
-                _logger.PolyglotDebug("UpdateUserLanguage: User config for {0} not found", userId);
+                _logger.PolyglotDebug("UpdateUserLanguage: User config for {0} not found", userEntity);
                 return false;
             }
 
-            _logger.PolyglotDebug("UpdateUserLanguage: Applying update to user {0}", userId);
+            _logger.PolyglotDebug("UpdateUserLanguage: Applying update to user {0}", userEntity);
 
             // Apply change
             update(userConfig);
@@ -472,7 +497,7 @@ public class ConfigurationService : IConfigurationService
             // Save immediately
             Plugin.Instance?.SaveConfiguration();
 
-            _logger.PolyglotDebug("UpdateUserLanguage: Saved configuration for user {0}", userId);
+            _logger.PolyglotDebug("UpdateUserLanguage: Saved configuration for user {0}", userEntity);
             return true;
         }
     }
@@ -489,15 +514,16 @@ public class ConfigurationService : IConfigurationService
                 return false;
             }
 
+            var userEntity = new LogUserEntity(userId, string.Empty);
             var removed = config.UserLanguages.RemoveAll(u => u.UserId == userId);
             if (removed > 0)
             {
                 Plugin.Instance?.SaveConfiguration();
-                _logger.PolyglotInfo("RemoveUserLanguage: Removed config for user {0}", userId);
+                _logger.PolyglotInfo("RemoveUserLanguage: Removed config for user {0}", userEntity);
                 return true;
             }
 
-            _logger.PolyglotDebug("RemoveUserLanguage: User config for {0} not found", userId);
+            _logger.PolyglotDebug("RemoveUserLanguage: User config for {0} not found", userEntity);
             return false;
         }
     }
@@ -534,17 +560,17 @@ public class ConfigurationService : IConfigurationService
             // Atomic duplicate check - prevents adding the same group DN multiple times
             if (config.LdapGroupMappings.Any(m => string.Equals(m.LdapGroupDn, mapping.LdapGroupDn, StringComparison.OrdinalIgnoreCase)))
             {
-                _logger.PolyglotWarning("AddLdapGroupMapping: Duplicate group DN '{0}' already exists", mapping.LdapGroupDn);
+                _logger.PolyglotWarning("AddLdapGroupMapping: Duplicate group DN already exists for mapping {0}", mapping.Id);
                 return false;
             }
 
-            _logger.PolyglotDebug("AddLdapGroupMapping: Adding mapping {0} ({1})", mapping.Id, mapping.LdapGroupDn);
+            _logger.PolyglotDebug("AddLdapGroupMapping: Adding mapping {0}", mapping.Id);
 
             config.LdapGroupMappings.Add(mapping);
             Plugin.Instance?.SaveConfiguration();
 
             _logger.PolyglotInfo("AddLdapGroupMapping: Added LDAP mapping {0} -> alternative {1}",
-                mapping.LdapGroupDn, mapping.LanguageAlternativeId);
+                mapping.Id, new LogAlternativeEntity(mapping.LanguageAlternativeId, string.Empty, string.Empty));
             return true;
         }
     }
@@ -568,7 +594,7 @@ public class ConfigurationService : IConfigurationService
                 return false;
             }
 
-            _logger.PolyglotDebug("RemoveLdapGroupMapping: Removing mapping {0} ({1})", mappingId, mapping.LdapGroupDn);
+            _logger.PolyglotDebug("RemoveLdapGroupMapping: Removing mapping {0}", mappingId);
 
             config.LdapGroupMappings.Remove(mapping);
             Plugin.Instance?.SaveConfiguration();

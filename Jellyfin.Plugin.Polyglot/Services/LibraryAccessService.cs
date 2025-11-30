@@ -44,12 +44,14 @@ public class LibraryAccessService : ILibraryAccessService
     /// <inheritdoc />
     public async Task UpdateUserLibraryAccessAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: Starting for user {0}", userId);
+        _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: Starting for user {0}",
+            new LogUserEntity(userId, string.Empty));
 
         var user = _userManager.GetUserById(userId);
         if (user == null)
         {
-            _logger.PolyglotWarning("UpdateUserLibraryAccessAsync: User {0} not found", userId);
+            _logger.PolyglotWarning("UpdateUserLibraryAccessAsync: User {0} not found",
+                new LogUserEntity(userId, string.Empty));
             return;
         }
 
@@ -121,7 +123,7 @@ public class LibraryAccessService : ILibraryAccessService
 
         await _userManager.UpdateUserAsync(user).ConfigureAwait(false);
 
-        _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: Completed for user {0}", userId);
+        _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: Completed for user {0}", userEntity);
     }
 
     /// <inheritdoc />
@@ -186,7 +188,8 @@ public class LibraryAccessService : ILibraryAccessService
             }
             catch (Exception ex)
             {
-                _logger.PolyglotError(ex, "ReconcileAllUsersAsync: Failed to reconcile user {0}", userLang.UserId);
+                _logger.PolyglotError(ex, "ReconcileAllUsersAsync: Failed to reconcile user {0}",
+                    new LogUserEntity(userLang.UserId, string.Empty));
             }
         }
 
@@ -406,12 +409,14 @@ public class LibraryAccessService : ILibraryAccessService
     /// <inheritdoc />
     public async Task DisableUserAsync(Guid userId, bool restoreFullAccess = false, CancellationToken cancellationToken = default)
     {
-        _logger.PolyglotDebug("DisableUserAsync: Disabling user {0}", userId);
+        _logger.PolyglotDebug("DisableUserAsync: Disabling user {0}",
+            new LogUserEntity(userId, string.Empty));
 
         var user = _userManager.GetUserById(userId);
         if (user == null)
         {
-            _logger.PolyglotWarning("DisableUserAsync: User {0} not found", userId);
+            _logger.PolyglotWarning("DisableUserAsync: User {0} not found",
+                new LogUserEntity(userId, string.Empty));
             return;
         }
 
@@ -453,7 +458,8 @@ public class LibraryAccessService : ILibraryAccessService
         var user = _userManager.GetUserById(userId);
         if (user == null)
         {
-            _logger.PolyglotWarning("AddLibrariesToUserAccessAsync: User {0} not found", userId);
+            _logger.PolyglotWarning("AddLibrariesToUserAccessAsync: User {0} not found",
+                new LogUserEntity(userId, string.Empty));
             return;
         }
 
