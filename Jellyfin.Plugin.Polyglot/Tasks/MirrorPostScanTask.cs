@@ -36,15 +36,9 @@ public class MirrorPostScanTask : ILibraryPostScanTask
     /// <inheritdoc />
     public async Task Run(IProgress<double> progress, CancellationToken cancellationToken)
     {
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            _logger.PolyglotWarning("MirrorPostScanTask: Configuration not available");
-            return;
-        }
-
         // Check if auto-sync after library scans is enabled
-        if (!config.SyncMirrorsAfterLibraryScan)
+        var syncEnabled = _configService.Read(c => c.SyncMirrorsAfterLibraryScan);
+        if (!syncEnabled)
         {
             _logger.PolyglotDebug("MirrorPostScanTask: Auto-sync disabled, skipping");
             return;
@@ -52,12 +46,11 @@ public class MirrorPostScanTask : ILibraryPostScanTask
 
         _logger.PolyglotInfo("MirrorPostScanTask: Library scan completed, syncing mirrors");
 
-        // Get alternative IDs (not objects) for iteration
-        var alternatives = _configService.GetAlternatives();
-        var alternativeIds = alternatives
-            .Where(a => a.MirroredLibraries.Count > 0) // Only sync alternatives with mirrors
+        // Get alternative IDs (not objects) for iteration - only sync alternatives with mirrors
+        var alternativeIds = _configService.Read(c => c.LanguageAlternatives
+            .Where(a => a.MirroredLibraries.Count > 0)
             .Select(a => a.Id)
-            .ToList();
+            .ToList());
 
         if (alternativeIds.Count == 0)
         {
@@ -73,7 +66,7 @@ public class MirrorPostScanTask : ILibraryPostScanTask
             cancellationToken.ThrowIfCancellationRequested();
 
             // Get fresh alternative data for logging
-            var alternative = _configService.GetAlternative(alternativeId);
+            var alternative = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId));
             if (alternative == null)
             {
                 completedAlternatives++;

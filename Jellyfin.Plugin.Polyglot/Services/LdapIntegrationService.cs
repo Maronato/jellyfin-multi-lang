@@ -8,7 +8,6 @@ using Jellyfin.Plugin.Polyglot.Helpers;
 using Jellyfin.Plugin.Polyglot.Models;
 using MediaBrowser.Common.Plugins;
 using Microsoft.Extensions.Logging;
-using Novell.Directory.Ldap;
 
 // Aliases for log entity types
 using LogUserEntity = Jellyfin.Plugin.Polyglot.Models.LogUser;
@@ -76,8 +75,8 @@ public class LdapIntegrationService : ILdapIntegrationService
                 status.ServerAddress = config?.LdapServer;
             }
 
-            var pluginConfig = _configService.GetConfiguration();
-            status.IsIntegrationEnabled = pluginConfig?.EnableLdapIntegration ?? false;
+            var isIntegrationEnabled = _configService.Read(c => c.EnableLdapIntegration);
+            status.IsIntegrationEnabled = isIntegrationEnabled;
         }
         catch (Exception ex)
         {
@@ -120,13 +119,14 @@ public class LdapIntegrationService : ILdapIntegrationService
     /// <inheritdoc />
     public async Task<Guid?> DetermineLanguageFromGroupsAsync(string username, CancellationToken cancellationToken = default)
     {
-        var config = _configService.GetConfiguration();
-        if (config == null || !config.EnableLdapIntegration)
+        var (ldapEnabled, ldapMappings) = _configService.Read(c =>
+            (c.EnableLdapIntegration, c.LdapGroupMappings.ToList()));
+
+        if (!ldapEnabled)
         {
             return null;
         }
 
-        var ldapMappings = _configService.GetLdapGroupMappings();
         if (ldapMappings.Count == 0)
         {
             return null;
@@ -141,7 +141,6 @@ public class LdapIntegrationService : ILdapIntegrationService
         }
 
         // Find matching mappings ordered by priority (highest first)
-        // For equal priorities, preserve original mapping order (first in list wins)
         var matchingMappings = ldapMappings
             .Select((mapping, index) => new { Mapping = mapping, Index = index })
             .Where(x => groupSet.Contains(x.Mapping.LdapGroupDn) || groupSet.Contains(x.Mapping.LdapGroupName))
@@ -187,11 +186,9 @@ public class LdapIntegrationService : ILdapIntegrationService
 
             var port = ldapConfig.LdapPort > 0 ? ldapConfig.LdapPort : (ldapConfig.UseSsl ? 636 : 389);
 
-            // Wrap blocking LDAP calls in Task.Run to prevent thread pool starvation
-            // This is consistent with QueryLdapGroupsAsync which also uses Task.Run
             await Task.Run(() =>
             {
-                using var connection = new LdapConnection();
+                using var connection = new Novell.Directory.Ldap.LdapConnection();
 
                 connection.Connect(ldapConfig.LdapServer, port);
 
@@ -221,7 +218,7 @@ public class LdapIntegrationService : ILdapIntegrationService
                 var languageId = await DetermineLanguageFromGroupsAsync(testUsername, cancellationToken).ConfigureAwait(false);
                 if (languageId.HasValue)
                 {
-                    var alt = _configService.GetAlternative(languageId.Value);
+                    var alt = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == languageId.Value));
                     result.MatchedLanguage = alt?.Name;
                     result.Message += $" - Matched language: {alt?.Name}";
                 }
@@ -250,7 +247,6 @@ public class LdapIntegrationService : ILdapIntegrationService
 
     /// <summary>
     /// Property names expected in the LDAP plugin configuration.
-    /// Used to validate schema compatibility.
     /// </summary>
     private static readonly string[] RequiredLdapProperties = new[]
     {
@@ -364,7 +360,7 @@ public class LdapIntegrationService : ILdapIntegrationService
 
         await Task.Run(() =>
         {
-            using var connection = new LdapConnection();
+            using var connection = new Novell.Directory.Ldap.LdapConnection();
             var port = config.LdapPort > 0 ? config.LdapPort : (config.UseSsl ? 636 : 389);
 
             connection.Connect(config.LdapServer, port);
@@ -386,7 +382,7 @@ public class LdapIntegrationService : ILdapIntegrationService
 
             var userResults = connection.Search(
                 config.LdapBaseDn,
-                LdapConnection.ScopeSub,
+                Novell.Directory.Ldap.LdapConnection.ScopeSub,
                 userFilter,
                 new[] { "dn", "memberOf" },
                 false);
@@ -416,7 +412,7 @@ public class LdapIntegrationService : ILdapIntegrationService
                         }
                     }
                 }
-                catch (LdapException)
+                catch (Novell.Directory.Ldap.LdapException)
                 {
                     break;
                 }
@@ -449,7 +445,6 @@ public class LdapIntegrationService : ILdapIntegrationService
             return null;
         }
 
-        // Simple parsing for CN=value,...
         var parts = dn.Split(',');
         foreach (var part in parts)
         {
@@ -480,4 +475,3 @@ public class LdapIntegrationService : ILdapIntegrationService
         public string LdapUidAttribute { get; set; } = "uid";
     }
 }
-

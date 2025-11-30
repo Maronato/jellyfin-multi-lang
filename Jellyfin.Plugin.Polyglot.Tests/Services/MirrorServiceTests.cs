@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FluentAssertions;
 using Jellyfin.Plugin.Polyglot.Models;
+using PluginConfig = Jellyfin.Plugin.Polyglot.Configuration.PluginConfiguration;
 using Jellyfin.Plugin.Polyglot.Services;
 using Jellyfin.Plugin.Polyglot.Tests.TestHelpers;
 using MediaBrowser.Controller.Library;
@@ -157,12 +159,94 @@ public class MirrorServiceFileOperationTests : IDisposable
         catch { }
     }
 
-    private void SetupMirrorConfig(LibraryMirror mirror)
+    /// <summary>
+    /// Creates a deep clone of the configuration using JSON serialization.
+    /// Matches the behavior of the real ConfigurationService.
+    /// </summary>
+    private static PluginConfig CloneConfig(PluginConfig config)
     {
-        _configServiceMock.Setup(m => m.GetMirror(mirror.Id)).Returns(mirror);
-        _configServiceMock.Setup(m => m.UpdateMirror(mirror.Id, It.IsAny<Action<LibraryMirror>>()))
-            .Callback<Guid, Action<LibraryMirror>>((id, action) => action(mirror))
-            .Returns(true);
+        var json = JsonSerializer.Serialize(config);
+        return JsonSerializer.Deserialize<PluginConfig>(json)!;
+    }
+
+    /// <summary>
+    /// Copies all configuration properties from source to destination.
+    /// Must be kept in sync with MockFactory.CopyConfigTo and PluginConfiguration properties.
+    /// </summary>
+    private static void CopyConfigTo(PluginConfig source, PluginConfig dest)
+    {
+        dest.EnableLdapIntegration = source.EnableLdapIntegration;
+        dest.FallbackOnLdapFailure = source.FallbackOnLdapFailure;
+        dest.AutoManageNewUsers = source.AutoManageNewUsers;
+        dest.DefaultLanguageAlternativeId = source.DefaultLanguageAlternativeId;
+        dest.SyncMirrorsAfterLibraryScan = source.SyncMirrorsAfterLibraryScan;
+        dest.UserReconciliationTime = source.UserReconciliationTime;
+        dest.ExcludedExtensions = source.ExcludedExtensions;
+        dest.ExcludedDirectories = source.ExcludedDirectories;
+        dest.LanguageAlternatives = source.LanguageAlternatives;
+        dest.UserLanguages = source.UserLanguages;
+        dest.LdapGroupMappings = source.LdapGroupMappings;
+    }
+
+    private void SetupMirrorConfig(LibraryMirror mirror, LanguageAlternative? alternative = null)
+    {
+        // Create an alternative if not provided
+        alternative ??= new LanguageAlternative
+        {
+            Id = Guid.NewGuid(),
+            Name = "TestAlternative",
+            LanguageCode = "en-US",
+            MirroredLibraries = new List<LibraryMirror> { mirror }
+        };
+
+        // Ensure mirror is in the alternative's list
+        if (!alternative.MirroredLibraries.Contains(mirror))
+        {
+            alternative.MirroredLibraries.Add(mirror);
+        }
+
+        var config = new PluginConfig
+        {
+            LanguageAlternatives = new List<LanguageAlternative> { alternative }
+        };
+
+        // Setup Read to return from a cloned snapshot (matches real ConfigurationService lines 44-46)
+        _configServiceMock.Setup(m => m.Read(It.IsAny<Func<PluginConfig, It.IsAnyType>>()))
+            .Returns((Delegate selector) =>
+            {
+                var snapshot = CloneConfig(config);
+                return selector.DynamicInvoke(snapshot);
+            });
+
+        // Setup Update(Action) to apply mutations to a cloned config
+        _configServiceMock.Setup(m => m.Update(It.IsAny<Action<PluginConfig>>()))
+            .Callback((Action<PluginConfig> mutation) =>
+            {
+                // Clone before mutation (matches real service line 65)
+                var snapshot = CloneConfig(config);
+                mutation(snapshot);
+                // Clone again to break references from objects added during mutation (matches line 78)
+                var toSave = CloneConfig(snapshot);
+                // Update the live config - copy ALL properties, not just LanguageAlternatives
+                CopyConfigTo(toSave, config);
+            });
+
+        // Setup Update(Func<bool>) to apply mutations conditionally
+        _configServiceMock.Setup(m => m.Update(It.IsAny<Func<PluginConfig, bool>>()))
+            .Returns((Func<PluginConfig, bool> mutation) =>
+            {
+                // Clone before mutation (matches real service line 65)
+                var snapshot = CloneConfig(config);
+                if (!mutation(snapshot))
+                {
+                    return false;
+                }
+                // Clone again to break references from objects added during mutation (matches line 78)
+                var toSave = CloneConfig(snapshot);
+                // Update the live config - copy ALL properties, not just LanguageAlternatives
+                CopyConfigTo(toSave, config);
+                return true;
+            });
     }
 
     [Fact]
@@ -200,7 +284,11 @@ public class MirrorServiceFileOperationTests : IDisposable
         var targetFile = Path.Combine(targetDir, "movie.mkv");
         File.Exists(targetFile).Should().BeTrue("video file should be hardlinked");
         File.ReadAllText(targetFile).Should().Be("video content");
-        mirror.Status.Should().Be(SyncStatus.Synced);
+        // Re-read from config since Update works with cloned snapshots (proper isolation)
+        var updatedMirror = _configServiceMock.Object.Read(c =>
+            c.LanguageAlternatives.SelectMany(a => a.MirroredLibraries).FirstOrDefault(m => m.Id == mirror.Id));
+        updatedMirror.Should().NotBeNull();
+        updatedMirror!.Status.Should().Be(SyncStatus.Synced);
     }
 
     [Fact]
@@ -681,14 +769,6 @@ public class MirrorServiceRefreshTests : IDisposable
         };
         alternative.MirroredLibraries.Add(mirror);
 
-        // Setup config service to return mirror and alternative
-        _configServiceMock.Setup(m => m.GetMirror(mirror.Id)).Returns(mirror);
-        _configServiceMock.Setup(m => m.GetMirrorWithAlternative(mirror.Id)).Returns((mirror, alternative.Id));
-        _configServiceMock.Setup(m => m.GetAlternative(alternative.Id)).Returns(alternative);
-        _configServiceMock.Setup(m => m.UpdateMirror(mirror.Id, It.IsAny<Action<LibraryMirror>>()))
-            .Callback<Guid, Action<LibraryMirror>>((id, action) => action(mirror))
-            .Returns(true);
-
         // Act
         await _service.CreateMirrorAsync(alternative.Id, mirror.Id);
 
@@ -764,12 +844,6 @@ public class MirrorServiceCleanupTests : IDisposable
             }
         });
 
-        // Setup removal
-        _configServiceMock.Setup(m => m.GetMirror(mirror.Id)).Returns(mirror);
-        _configServiceMock.Setup(m => m.RemoveMirror(mirror.Id))
-            .Callback(() => alternative.MirroredLibraries.Remove(mirror))
-            .Returns(true);
-
         // Act
         var result = await _service.CleanupOrphanedMirrorsAsync();
 
@@ -779,7 +853,7 @@ public class MirrorServiceCleanupTests : IDisposable
             .Which.Should().Contain(mirror.TargetLibraryName)
             .And.Contain("mirror deleted");
 
-        alternative.MirroredLibraries.Should().BeEmpty("orphaned mirror config should be removed");
+        _context.Configuration.LanguageAlternatives.First().MirroredLibraries.Should().BeEmpty("orphaned mirror config should be removed");
         result.SourcesWithoutMirrors.Should().ContainSingle().Which.Should().Be(sourceId);
     }
 
@@ -804,11 +878,6 @@ public class MirrorServiceCleanupTests : IDisposable
 
         _libraryManagerMock.Setup(m => m.GetVirtualFolders()).Returns(new List<VirtualFolderInfo>());
 
-        _configServiceMock.Setup(m => m.GetMirror(mirror.Id)).Returns(mirror);
-        _configServiceMock.Setup(m => m.RemoveMirror(mirror.Id))
-            .Callback(() => alternative.MirroredLibraries.Remove(mirror))
-            .Returns(true);
-
         // Act
         var result = await _service.CleanupOrphanedMirrorsAsync();
 
@@ -818,7 +887,7 @@ public class MirrorServiceCleanupTests : IDisposable
             .Which.Should().Contain(mirror.TargetLibraryName)
             .And.Contain("source deleted");
 
-        alternative.MirroredLibraries.Should().BeEmpty();
+        _context.Configuration.LanguageAlternatives.First().MirroredLibraries.Should().BeEmpty();
         Directory.Exists(tempDir).Should().BeFalse("mirror files should be deleted when source library is deleted");
     }
 
@@ -853,11 +922,6 @@ public class MirrorServiceCleanupTests : IDisposable
             }
         });
 
-        _configServiceMock.Setup(m => m.GetMirror(mirror.Id)).Returns(mirror);
-        _configServiceMock.Setup(m => m.RemoveMirror(mirror.Id))
-            .Callback(() => alternative.MirroredLibraries.Remove(mirror))
-            .Returns(true);
-
         // Act
         var result = await _service.CleanupOrphanedMirrorsAsync();
 
@@ -867,7 +931,7 @@ public class MirrorServiceCleanupTests : IDisposable
             .Which.Should().Contain(mirror.TargetLibraryName)
             .And.Contain("source deleted");
 
-        alternative.MirroredLibraries.Should().BeEmpty();
+        _context.Configuration.LanguageAlternatives.First().MirroredLibraries.Should().BeEmpty();
 
         _libraryManagerMock.Verify(
             m => m.RemoveVirtualFolder(mirror.TargetLibraryName, true),

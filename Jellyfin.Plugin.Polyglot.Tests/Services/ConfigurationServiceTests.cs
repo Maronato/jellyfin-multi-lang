@@ -9,7 +9,8 @@ using Xunit;
 namespace Jellyfin.Plugin.Polyglot.Tests.Services;
 
 /// <summary>
-/// Tests for ConfigurationService that verify thread-safe configuration operations.
+/// Tests for ConfigurationService that verify thread-safe configuration operations
+/// using the generic Read/Update pattern.
 /// Uses PluginTestContext to set up Plugin.Instance properly.
 /// </summary>
 public class ConfigurationServiceTests : IDisposable
@@ -26,16 +27,16 @@ public class ConfigurationServiceTests : IDisposable
 
     public void Dispose() => _context.Dispose();
 
-    #region GetAlternative - Deep Copy Behavior
+    #region Read - Immutable Snapshot Behavior
 
     [Fact]
-    public void GetAlternative_ReturnsDeepCopy_ModificationsDoNotAffectConfig()
+    public void Read_ReturnsImmutableSnapshot_ModificationsDoNotAffectConfig()
     {
         // Arrange
         var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
 
-        // Act - Get the alternative and modify it
-        var retrieved = _service.GetAlternative(alternative.Id);
+        // Act - Read the alternative and modify it
+        var retrieved = _service.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternative.Id));
         retrieved.Should().NotBeNull();
         retrieved!.Name = "Modified Name";
         retrieved.MirroredLibraries.Add(new LibraryMirror { Id = Guid.NewGuid() });
@@ -47,37 +48,33 @@ public class ConfigurationServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetAlternative_NonExistent_ReturnsNull()
+    public void Read_NonExistentEntity_ReturnsNull()
     {
         // Arrange
         var nonExistentId = Guid.NewGuid();
 
         // Act
-        var result = _service.GetAlternative(nonExistentId);
+        var result = _service.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == nonExistentId));
 
         // Assert
         result.Should().BeNull();
     }
 
-    #endregion
-
-    #region GetAlternatives - Deep Copy Behavior
-
     [Fact]
-    public void GetAlternatives_ReturnsDeepCopies()
+    public void Read_ReturnsDeepCopiesOfCollections()
     {
         // Arrange
         _context.AddLanguageAlternative("Portuguese", "pt-BR");
         _context.AddLanguageAlternative("Spanish", "es-ES");
 
         // Act
-        var alternatives = _service.GetAlternatives();
+        var alternatives = _service.Read(c => c.LanguageAlternatives.ToList());
 
         // Assert
         alternatives.Should().HaveCount(2);
 
         // Modify returned list
-        alternatives.ToList().ForEach(a => a.Name = "Modified");
+        alternatives.ForEach(a => a.Name = "Modified");
 
         // Config should be unchanged
         _context.Configuration.LanguageAlternatives
@@ -85,20 +82,18 @@ public class ConfigurationServiceTests : IDisposable
             .Should().BeFalse("modifications to returned copies should not affect config");
     }
 
-    #endregion
-
-    #region GetMirror - Deep Copy Behavior
-
     [Fact]
-    public void GetMirror_ReturnsDeepCopy_ModificationsDoNotAffectConfig()
+    public void Read_Mirror_ReturnsDeepCopy_ModificationsDoNotAffectConfig()
     {
         // Arrange
         var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
         var sourceLibraryId = Guid.NewGuid();
         var mirror = _context.AddMirror(alternative, sourceLibraryId, "Movies");
 
-        // Act - Get the mirror and modify it
-        var retrieved = _service.GetMirror(mirror.Id);
+        // Act - Read the mirror and modify it
+        var retrieved = _service.Read(c => c.LanguageAlternatives
+            .SelectMany(a => a.MirroredLibraries)
+            .FirstOrDefault(m => m.Id == mirror.Id));
         retrieved.Should().NotBeNull();
         retrieved!.TargetLibraryName = "Modified Name";
         retrieved.Status = SyncStatus.Error;
@@ -111,53 +106,40 @@ public class ConfigurationServiceTests : IDisposable
         original.Status.Should().Be(SyncStatus.Synced); // AddMirror sets Synced status
     }
 
+    [Fact]
+    public void Read_ScalarValue_ReturnsCorrectValue()
+    {
+        // Arrange
+        _context.Configuration.AutoManageNewUsers = true;
+        _context.Configuration.UserReconciliationTime = "03:00";
+
+        // Act
+        var (autoManage, reconcTime) = _service.Read(c => (c.AutoManageNewUsers, c.UserReconciliationTime));
+
+        // Assert
+        autoManage.Should().BeTrue();
+        reconcTime.Should().Be("03:00");
+    }
+
     #endregion
 
-    #region AddAlternative - Atomic Duplicate Check
+    #region Update(Action) - Always Saves
 
     [Fact]
-    public void AddAlternative_DuplicateName_ReturnsFalse()
+    public void Update_ActionOverload_AlwaysSaves()
     {
         // Arrange
-        _context.AddLanguageAlternative("Portuguese", "pt-BR");
-
-        var duplicate = new LanguageAlternative
-        {
-            Id = Guid.NewGuid(),
-            Name = "Portuguese", // Same name (case-insensitive)
-            LanguageCode = "pt-PT"
-        };
+        _context.Configuration.AutoManageNewUsers = false;
 
         // Act
-        var result = _service.AddAlternative(duplicate);
+        _service.Update(c => c.AutoManageNewUsers = true);
 
         // Assert
-        result.Should().BeFalse("should reject duplicate name");
-        _context.Configuration.LanguageAlternatives.Should().HaveCount(1);
+        _context.Configuration.AutoManageNewUsers.Should().BeTrue();
     }
 
     [Fact]
-    public void AddAlternative_DuplicateNameCaseInsensitive_ReturnsFalse()
-    {
-        // Arrange
-        _context.AddLanguageAlternative("Portuguese", "pt-BR");
-
-        var duplicate = new LanguageAlternative
-        {
-            Id = Guid.NewGuid(),
-            Name = "PORTUGUESE", // Different case
-            LanguageCode = "pt-PT"
-        };
-
-        // Act
-        var result = _service.AddAlternative(duplicate);
-
-        // Assert
-        result.Should().BeFalse("should reject duplicate name case-insensitively");
-    }
-
-    [Fact]
-    public void AddAlternative_UniqueName_ReturnsTrue()
+    public void Update_AddAlternative_PersistsChange()
     {
         // Arrange
         var alternative = new LanguageAlternative
@@ -168,35 +150,167 @@ public class ConfigurationServiceTests : IDisposable
         };
 
         // Act
-        var result = _service.AddAlternative(alternative);
+        _service.Update(c => c.LanguageAlternatives.Add(alternative));
 
         // Assert
-        result.Should().BeTrue();
         _context.Configuration.LanguageAlternatives.Should().Contain(a => a.Id == alternative.Id);
+    }
+
+    [Fact]
+    public void Update_RemoveAlternative_PersistsChange()
+    {
+        // Arrange
+        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
+
+        // Act
+        _service.Update(c =>
+        {
+            var toRemove = c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternative.Id);
+            if (toRemove != null) c.LanguageAlternatives.Remove(toRemove);
+        });
+
+        // Assert
+        _context.Configuration.LanguageAlternatives.Should().NotContain(a => a.Id == alternative.Id);
     }
 
     #endregion
 
-    #region RemoveAlternative - Dangling Reference Cleanup
+    #region Update(Func<bool>) - Conditional Save
 
     [Fact]
-    public void RemoveAlternative_ClearsDefaultLanguageAlternativeId_WhenDeletingDefault()
+    public void Update_FuncReturnsTrue_SavesChanges()
+    {
+        // Arrange
+        _context.Configuration.AutoManageNewUsers = false;
+
+        // Act
+        var result = _service.Update(c =>
+        {
+            c.AutoManageNewUsers = true;
+            return true; // Save
+        });
+
+        // Assert
+        result.Should().BeTrue();
+        _context.Configuration.AutoManageNewUsers.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Update_FuncReturnsFalse_DiscardsChanges()
+    {
+        // Arrange
+        _context.Configuration.AutoManageNewUsers = false;
+
+        // Act - Return false to abort (validation failure scenario)
+        var result = _service.Update(c =>
+        {
+            c.AutoManageNewUsers = true; // Would be set in snapshot
+            return false; // But abort - don't save
+        });
+
+        // Assert
+        result.Should().BeFalse();
+        // Original config should be unchanged because we worked on a snapshot
+        _context.Configuration.AutoManageNewUsers.Should().BeFalse(
+            "snapshot should be discarded when returning false");
+    }
+
+    [Fact]
+    public void Update_DuplicateAlternativeName_CanRejectWithFalse()
+    {
+        // Arrange
+        _context.AddLanguageAlternative("Portuguese", "pt-BR");
+
+        var duplicate = new LanguageAlternative
+        {
+            Id = Guid.NewGuid(),
+            Name = "Portuguese", // Same name
+            LanguageCode = "pt-PT"
+        };
+
+        // Act
+        var result = _service.Update(c =>
+        {
+            if (c.LanguageAlternatives.Any(a => string.Equals(a.Name, duplicate.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false; // Reject duplicate
+            }
+            c.LanguageAlternatives.Add(duplicate);
+            return true;
+        });
+
+        // Assert
+        result.Should().BeFalse("should reject duplicate name");
+        _context.Configuration.LanguageAlternatives.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void Update_DuplicateSourceLibrary_CanRejectWithFalse()
+    {
+        // Arrange
+        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
+        var sourceLibraryId = Guid.NewGuid();
+        _context.AddMirror(alternative, sourceLibraryId, "Movies");
+
+        var duplicateMirror = new LibraryMirror
+        {
+            Id = Guid.NewGuid(),
+            SourceLibraryId = sourceLibraryId, // Same source
+            TargetLibraryName = "Filmes 2"
+        };
+
+        // Act
+        var result = _service.Update(c =>
+        {
+            var alt = c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternative.Id);
+            if (alt == null) return false;
+            if (alt.MirroredLibraries.Any(m => m.SourceLibraryId == duplicateMirror.SourceLibraryId))
+            {
+                return false; // Reject duplicate source
+            }
+            alt.MirroredLibraries.Add(duplicateMirror);
+            return true;
+        });
+
+        // Assert
+        result.Should().BeFalse("should reject duplicate source library");
+        var updatedAlt = _context.Configuration.LanguageAlternatives.First(a => a.Id == alternative.Id);
+        updatedAlt.MirroredLibraries.Should().HaveCount(1);
+    }
+
+    #endregion
+
+    #region Update - Dangling Reference Cleanup
+
+    [Fact]
+    public void Update_RemoveAlternative_ClearsDefaultLanguageAlternativeId_WhenDeletingDefault()
     {
         // Arrange - Set up an alternative as the default
         var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
         _context.Configuration.DefaultLanguageAlternativeId = alternative.Id;
 
         // Act
-        var result = _service.RemoveAlternative(alternative.Id);
+        _service.Update(c =>
+        {
+            var toRemove = c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternative.Id);
+            if (toRemove != null)
+            {
+                c.LanguageAlternatives.Remove(toRemove);
+                // Clean up dangling reference
+                if (c.DefaultLanguageAlternativeId == alternative.Id)
+                {
+                    c.DefaultLanguageAlternativeId = null;
+                }
+            }
+        });
 
         // Assert
-        result.Should().BeTrue();
         _context.Configuration.DefaultLanguageAlternativeId.Should().BeNull(
             "DefaultLanguageAlternativeId should be cleared when the default alternative is deleted");
     }
 
     [Fact]
-    public void RemoveAlternative_PreservesDefaultLanguageAlternativeId_WhenDeletingOther()
+    public void Update_RemoveAlternative_PreservesDefaultLanguageAlternativeId_WhenDeletingOther()
     {
         // Arrange - Set up two alternatives, one as default
         var defaultAlt = _context.AddLanguageAlternative("Portuguese", "pt-BR");
@@ -204,16 +318,19 @@ public class ConfigurationServiceTests : IDisposable
         _context.Configuration.DefaultLanguageAlternativeId = defaultAlt.Id;
 
         // Act - Delete the non-default one
-        var result = _service.RemoveAlternative(otherAlt.Id);
+        _service.Update(c =>
+        {
+            var toRemove = c.LanguageAlternatives.FirstOrDefault(a => a.Id == otherAlt.Id);
+            if (toRemove != null) c.LanguageAlternatives.Remove(toRemove);
+        });
 
         // Assert
-        result.Should().BeTrue();
         _context.Configuration.DefaultLanguageAlternativeId.Should().Be(defaultAlt.Id,
             "DefaultLanguageAlternativeId should be preserved when deleting a non-default alternative");
     }
 
     [Fact]
-    public void RemoveAlternative_RemovesLdapMappings_ThatReferenceDeletedAlternative()
+    public void Update_RemoveAlternative_RemovesLdapMappings_ThatReferenceDeletedAlternative()
     {
         // Arrange
         var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
@@ -234,10 +351,18 @@ public class ConfigurationServiceTests : IDisposable
         });
 
         // Act
-        var result = _service.RemoveAlternative(alternative.Id);
+        _service.Update(c =>
+        {
+            var toRemove = c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternative.Id);
+            if (toRemove != null)
+            {
+                c.LanguageAlternatives.Remove(toRemove);
+                // Clean up dangling LDAP mappings
+                c.LdapGroupMappings.RemoveAll(m => m.LanguageAlternativeId == alternative.Id);
+            }
+        });
 
         // Assert
-        result.Should().BeTrue();
         _context.Configuration.LdapGroupMappings.Should().HaveCount(1,
             "LDAP mapping for deleted alternative should be removed");
         _context.Configuration.LdapGroupMappings.First().LanguageAlternativeId.Should().Be(otherAlt.Id,
@@ -246,116 +371,10 @@ public class ConfigurationServiceTests : IDisposable
 
     #endregion
 
-    #region TryRemoveAlternativeAtomic - Dangling Reference Cleanup
+    #region Update - Mirror Operations
 
     [Fact]
-    public void TryRemoveAlternativeAtomic_ClearsDefaultLanguageAlternativeId()
-    {
-        // Arrange
-        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
-        _context.Configuration.DefaultLanguageAlternativeId = alternative.Id;
-
-        // Act
-        var result = _service.TryRemoveAlternativeAtomic(alternative.Id, new HashSet<Guid>());
-
-        // Assert
-        result.Success.Should().BeTrue();
-        _context.Configuration.DefaultLanguageAlternativeId.Should().BeNull(
-            "DefaultLanguageAlternativeId should be cleared when using atomic remove");
-    }
-
-    [Fact]
-    public void TryRemoveAlternativeAtomic_RejectsWhenNewMirrorsAdded()
-    {
-        // Arrange
-        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
-        var sourceLibraryId = Guid.NewGuid();
-        var mirror = _context.AddMirror(alternative, sourceLibraryId, "Movies");
-
-        // Expected mirrors is empty (simulating deletion started before mirror was added)
-        var expectedMirrorIds = new HashSet<Guid>();
-
-        // Act
-        var result = _service.TryRemoveAlternativeAtomic(alternative.Id, expectedMirrorIds);
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.FailureReason.Should().Be(RemoveAlternativeFailureReason.NewMirrorsAdded);
-        result.UnexpectedMirrorIds.Should().Contain(mirror.Id);
-        _context.Configuration.LanguageAlternatives.Should().Contain(a => a.Id == alternative.Id,
-            "alternative should not be removed when new mirrors detected");
-    }
-
-    [Fact]
-    public void TryRemoveAlternativeAtomic_SucceedsWhenMirrorsMatch()
-    {
-        // Arrange
-        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
-        var sourceLibraryId = Guid.NewGuid();
-        var mirror = _context.AddMirror(alternative, sourceLibraryId, "Movies");
-
-        var expectedMirrorIds = new HashSet<Guid> { mirror.Id };
-
-        // Act
-        var result = _service.TryRemoveAlternativeAtomic(alternative.Id, expectedMirrorIds);
-
-        // Assert
-        result.Success.Should().BeTrue();
-        _context.Configuration.LanguageAlternatives.Should().NotContain(a => a.Id == alternative.Id);
-    }
-
-    #endregion
-
-    #region AddMirror - Atomic Duplicate Check
-
-    [Fact]
-    public void AddMirror_DuplicateSourceLibrary_ReturnsFalse()
-    {
-        // Arrange
-        var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
-        var sourceLibraryId = Guid.NewGuid();
-        _context.AddMirror(alternative, sourceLibraryId, "Movies");
-
-        var duplicateMirror = new LibraryMirror
-        {
-            Id = Guid.NewGuid(),
-            SourceLibraryId = sourceLibraryId, // Same source
-            TargetLibraryName = "Filmes 2"
-        };
-
-        // Act
-        var result = _service.AddMirror(alternative.Id, duplicateMirror);
-
-        // Assert
-        result.Should().BeFalse("should reject duplicate source library");
-        var updatedAlt = _context.Configuration.LanguageAlternatives.First(a => a.Id == alternative.Id);
-        updatedAlt.MirroredLibraries.Should().HaveCount(1);
-    }
-
-    [Fact]
-    public void AddMirror_NonExistentAlternative_ReturnsFalse()
-    {
-        // Arrange
-        var nonExistentAltId = Guid.NewGuid();
-        var mirror = new LibraryMirror
-        {
-            Id = Guid.NewGuid(),
-            SourceLibraryId = Guid.NewGuid()
-        };
-
-        // Act
-        var result = _service.AddMirror(nonExistentAltId, mirror);
-
-        // Assert
-        result.Should().BeFalse();
-    }
-
-    #endregion
-
-    #region UpdateMirror - Atomic Update
-
-    [Fact]
-    public void UpdateMirror_ExistingMirror_AppliesChanges()
+    public void Update_Mirror_AppliesChanges()
     {
         // Arrange
         var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
@@ -363,14 +382,19 @@ public class ConfigurationServiceTests : IDisposable
         var mirror = _context.AddMirror(alternative, sourceLibraryId, "Movies");
 
         // Act
-        var result = _service.UpdateMirror(mirror.Id, m =>
+        _service.Update(c =>
         {
-            m.Status = SyncStatus.Error;
-            m.LastSyncFileCount = 100;
+            var m = c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(x => x.Id == mirror.Id);
+            if (m != null)
+            {
+                m.Status = SyncStatus.Error;
+                m.LastSyncFileCount = 100;
+            }
         });
 
         // Assert
-        result.Should().BeTrue();
         var updated = _context.Configuration.LanguageAlternatives
             .SelectMany(a => a.MirroredLibraries)
             .First(m => m.Id == mirror.Id);
@@ -378,44 +402,38 @@ public class ConfigurationServiceTests : IDisposable
         updated.LastSyncFileCount.Should().Be(100);
     }
 
-    [Fact]
-    public void UpdateMirror_NonExistentMirror_ReturnsFalse()
-    {
-        // Arrange
-        var nonExistentId = Guid.NewGuid();
-
-        // Act
-        var result = _service.UpdateMirror(nonExistentId, m => m.Status = SyncStatus.Error);
-
-        // Assert
-        result.Should().BeFalse();
-    }
-
     #endregion
 
     #region User Language Operations
 
     [Fact]
-    public void UpdateOrCreateUserLanguage_NewUser_CreatesEntry()
+    public void Update_CreateUserLanguage_NewUser_CreatesEntry()
     {
         // Arrange
         var userId = Guid.NewGuid();
         var altId = _context.AddLanguageAlternative().Id;
 
         // Act
-        var isNew = _service.UpdateOrCreateUserLanguage(userId, u =>
+        _service.Update(c =>
         {
-            u.SelectedAlternativeId = altId;
-            u.IsPluginManaged = true;
+            var existing = c.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            if (existing == null)
+            {
+                c.UserLanguages.Add(new UserLanguageConfig
+                {
+                    UserId = userId,
+                    SelectedAlternativeId = altId,
+                    IsPluginManaged = true
+                });
+            }
         });
 
         // Assert
-        isNew.Should().BeTrue("should indicate new entry was created");
         _context.Configuration.UserLanguages.Should().Contain(u => u.UserId == userId);
     }
 
     [Fact]
-    public void UpdateOrCreateUserLanguage_ExistingUser_UpdatesEntry()
+    public void Update_UpdateUserLanguage_ExistingUser_UpdatesEntry()
     {
         // Arrange
         var userId = Guid.NewGuid();
@@ -424,19 +442,22 @@ public class ConfigurationServiceTests : IDisposable
         _context.AddUserLanguage(userId, alt1.Id);
 
         // Act
-        var isNew = _service.UpdateOrCreateUserLanguage(userId, u =>
+        _service.Update(c =>
         {
-            u.SelectedAlternativeId = alt2.Id;
+            var userConfig = c.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            if (userConfig != null)
+            {
+                userConfig.SelectedAlternativeId = alt2.Id;
+            }
         });
 
         // Assert
-        isNew.Should().BeFalse("should indicate existing entry was updated");
-        var userConfig = _context.Configuration.UserLanguages.First(u => u.UserId == userId);
-        userConfig.SelectedAlternativeId.Should().Be(alt2.Id);
+        var updated = _context.Configuration.UserLanguages.First(u => u.UserId == userId);
+        updated.SelectedAlternativeId.Should().Be(alt2.Id);
     }
 
     [Fact]
-    public void GetUserLanguage_ReturnsDeepCopy()
+    public void Read_UserLanguage_ReturnsDeepCopy()
     {
         // Arrange
         var userId = Guid.NewGuid();
@@ -444,7 +465,7 @@ public class ConfigurationServiceTests : IDisposable
         _context.AddUserLanguage(userId, altId, manuallySet: true, setBy: "admin");
 
         // Act
-        var retrieved = _service.GetUserLanguage(userId);
+        var retrieved = _service.Read(c => c.UserLanguages.FirstOrDefault(u => u.UserId == userId));
         retrieved.Should().NotBeNull();
         retrieved!.ManuallySet = false; // Modify the copy
 
@@ -458,7 +479,7 @@ public class ConfigurationServiceTests : IDisposable
     #region LDAP Group Mapping Operations
 
     [Fact]
-    public void AddLdapGroupMapping_DuplicateGroupDn_ReturnsFalse()
+    public void Update_AddLdapGroupMapping_DuplicateGroupDn_CanRejectWithFalse()
     {
         // Arrange
         var altId = _context.AddLanguageAlternative().Id;
@@ -477,14 +498,22 @@ public class ConfigurationServiceTests : IDisposable
         };
 
         // Act
-        var result = _service.AddLdapGroupMapping(duplicate);
+        var result = _service.Update(c =>
+        {
+            if (c.LdapGroupMappings.Any(m => string.Equals(m.LdapGroupDn, duplicate.LdapGroupDn, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false; // Reject duplicate
+            }
+            c.LdapGroupMappings.Add(duplicate);
+            return true;
+        });
 
         // Assert
         result.Should().BeFalse("should reject duplicate group DN");
     }
 
     [Fact]
-    public void AddLdapGroupMapping_DuplicateGroupDnCaseInsensitive_ReturnsFalse()
+    public void Update_AddLdapGroupMapping_DuplicateGroupDnCaseInsensitive_CanRejectWithFalse()
     {
         // Arrange
         var altId = _context.AddLanguageAlternative().Id;
@@ -503,7 +532,15 @@ public class ConfigurationServiceTests : IDisposable
         };
 
         // Act
-        var result = _service.AddLdapGroupMapping(duplicate);
+        var result = _service.Update(c =>
+        {
+            if (c.LdapGroupMappings.Any(m => string.Equals(m.LdapGroupDn, duplicate.LdapGroupDn, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+            c.LdapGroupMappings.Add(duplicate);
+            return true;
+        });
 
         // Assert
         result.Should().BeFalse("should reject duplicate group DN case-insensitively");
@@ -511,50 +548,10 @@ public class ConfigurationServiceTests : IDisposable
 
     #endregion
 
-    #region UpdateSettings
-
-    [Fact]
-    public void UpdateSettings_ActionOverload_AlwaysSaves()
-    {
-        // Arrange
-        _context.Configuration.AutoManageNewUsers = false;
-
-        // Act
-        _service.UpdateSettings(config =>
-        {
-            config.AutoManageNewUsers = true;
-        });
-
-        // Assert
-        _context.Configuration.AutoManageNewUsers.Should().BeTrue();
-    }
-
-    [Fact]
-    public void UpdateSettings_FuncOverload_SavesOnlyWhenReturnsTrue()
-    {
-        // Arrange
-        _context.Configuration.AutoManageNewUsers = false;
-
-        // Act - Return false to skip saving (validation failure scenario)
-        var result = _service.UpdateSettings(config =>
-        {
-            config.AutoManageNewUsers = true; // Would be set
-            return false; // But don't save
-        });
-
-        // Assert
-        result.Should().BeFalse();
-        // Note: In the actual ConfigurationService, the change IS applied to the in-memory config
-        // but SaveConfiguration is not called. Since we're using PluginTestContext,
-        // the change persists in memory, but in production it wouldn't persist to disk.
-    }
-
-    #endregion
-
     #region ClearAllConfiguration
 
     [Fact]
-    public void ClearAllConfiguration_RemovesAllData()
+    public void Update_ClearAllConfiguration_RemovesAllData()
     {
         // Arrange
         var alt = _context.AddLanguageAlternative("Portuguese", "pt-BR");
@@ -574,7 +571,12 @@ public class ConfigurationServiceTests : IDisposable
         _context.Configuration.LdapGroupMappings.Should().NotBeEmpty();
 
         // Act
-        _service.ClearAllConfiguration();
+        _service.Update(c =>
+        {
+            c.LanguageAlternatives.Clear();
+            c.UserLanguages.Clear();
+            c.LdapGroupMappings.Clear();
+        });
 
         // Assert
         _context.Configuration.LanguageAlternatives.Should().BeEmpty();
@@ -584,10 +586,10 @@ public class ConfigurationServiceTests : IDisposable
 
     #endregion
 
-    #region GetMirrorWithAlternative
+    #region Read - Mirror with Alternative
 
     [Fact]
-    public void GetMirrorWithAlternative_ExistingMirror_ReturnsMirrorAndAlternativeId()
+    public void Read_MirrorWithAlternative_ExistingMirror_ReturnsMirrorAndAlternativeId()
     {
         // Arrange
         var alternative = _context.AddLanguageAlternative("Portuguese", "pt-BR");
@@ -595,27 +597,75 @@ public class ConfigurationServiceTests : IDisposable
         var mirror = _context.AddMirror(alternative, sourceLibraryId, "Movies");
 
         // Act
-        var result = _service.GetMirrorWithAlternative(mirror.Id);
+        var result = _service.Read(c =>
+        {
+            foreach (var alt in c.LanguageAlternatives)
+            {
+                var m = alt.MirroredLibraries.FirstOrDefault(x => x.Id == mirror.Id);
+                if (m != null)
+                {
+                    return (m, alt.Id);
+                }
+            }
+            return ((LibraryMirror?)null, Guid.Empty);
+        });
 
         // Assert
-        result.Should().NotBeNull();
-        result!.Value.Mirror.Id.Should().Be(mirror.Id);
-        result.Value.AlternativeId.Should().Be(alternative.Id);
+        result.Item1.Should().NotBeNull();
+        result.Item1!.Id.Should().Be(mirror.Id);
+        result.Item2.Should().Be(alternative.Id);
     }
 
     [Fact]
-    public void GetMirrorWithAlternative_NonExistentMirror_ReturnsNull()
+    public void Read_MirrorWithAlternative_NonExistentMirror_ReturnsNull()
     {
         // Arrange
         var nonExistentId = Guid.NewGuid();
 
         // Act
-        var result = _service.GetMirrorWithAlternative(nonExistentId);
+        var result = _service.Read(c =>
+        {
+            foreach (var alt in c.LanguageAlternatives)
+            {
+                var m = alt.MirroredLibraries.FirstOrDefault(x => x.Id == nonExistentId);
+                if (m != null)
+                {
+                    return (m, alt.Id);
+                }
+            }
+            return ((LibraryMirror?)null, Guid.Empty);
+        });
 
         // Assert
-        result.Should().BeNull();
+        result.Item1.Should().BeNull();
+    }
+
+    #endregion
+
+    #region Snapshot Isolation Tests
+
+    [Fact]
+    public void Update_ExternalReferenceAfterSave_DoesNotAffectConfig()
+    {
+        // Arrange - This tests that the double-clone mechanism works
+        var newAlt = new LanguageAlternative
+        {
+            Id = Guid.NewGuid(),
+            Name = "Portuguese",
+            LanguageCode = "pt-BR"
+        };
+
+        // Act
+        _service.Update(c => c.LanguageAlternatives.Add(newAlt));
+
+        // Now modify the object we passed in
+        newAlt.Name = "Modified After Save";
+
+        // Assert - Config should have the original value
+        var saved = _context.Configuration.LanguageAlternatives.First(a => a.Id == newAlt.Id);
+        saved.Name.Should().Be("Portuguese",
+            "modifications to objects after save should not affect config (double-clone)");
     }
 
     #endregion
 }
-

@@ -101,14 +101,14 @@ public class PluginConfiguration : BasePluginConfiguration
     }
 
     /// <summary>
-    /// Gets the default excluded file extensions (read-only, from FileClassifier).
+    /// Gets the default excluded file extensions (static, from FileClassifier).
     /// </summary>
-    public HashSet<string> DefaultExcludedExtensions => NormalizeToLowercaseSet(FileClassifier.DefaultExcludedExtensions);
+    public static HashSet<string> DefaultExcludedExtensions => NormalizeToLowercaseSet(FileClassifier.DefaultExcludedExtensions);
 
     /// <summary>
-    /// Gets the default excluded directory names (read-only, from FileClassifier).
+    /// Gets the default excluded directory names (static, from FileClassifier).
     /// </summary>
-    public HashSet<string> DefaultExcludedDirectories => NormalizeToLowercaseSet(FileClassifier.DefaultExcludedDirectories);
+    public static HashSet<string> DefaultExcludedDirectories => NormalizeToLowercaseSet(FileClassifier.DefaultExcludedDirectories);
 
     /// <summary>
     /// Normalizes a collection of strings to a lowercase HashSet.
@@ -127,4 +127,3 @@ public class PluginConfiguration : BasePluginConfiguration
             StringComparer.OrdinalIgnoreCase);
     }
 }
-

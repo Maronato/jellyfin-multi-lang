@@ -44,16 +44,13 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
         var userEntity = new LogUser(user.Id, user.Username);
         _logger.PolyglotInfo("UserCreatedConsumer: User created: {0}", userEntity);
 
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            _logger.PolyglotWarning("UserCreatedConsumer: Configuration not available");
-            return;
-        }
+        // Get config values in one atomic read
+        var (ldapEnabled, fallbackOnLdapFailure, autoManageNewUsers, defaultLanguageAlternativeId) = _configService.Read(c =>
+            (c.EnableLdapIntegration, c.FallbackOnLdapFailure, c.AutoManageNewUsers, c.DefaultLanguageAlternativeId));
 
         // First, try LDAP-based assignment if enabled
         bool ldapLookupFailed = false;
-        if (config.EnableLdapIntegration && _ldapIntegrationService.IsLdapPluginAvailable())
+        if (ldapEnabled && _ldapIntegrationService.IsLdapPluginAvailable())
         {
             try
             {
@@ -71,7 +68,7 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
                         CancellationToken.None).ConfigureAwait(false);
 
                     // Get language alternative for logging
-                    var alt = _configService.GetAlternative(languageId.Value);
+                    var alt = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == languageId.Value));
                     if (alt != null)
                     {
                         _logger.PolyglotInfo(
@@ -105,7 +102,7 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
         // Fall back to auto-manage if enabled, but check LDAP failure behavior setting
         // When FallbackOnLdapFailure is false, we don't auto-assign on LDAP failure
         // to avoid assigning the wrong language when LDAP should have determined it
-        if (ldapLookupFailed && !config.FallbackOnLdapFailure)
+        if (ldapLookupFailed && !fallbackOnLdapFailure)
         {
             _logger.PolyglotWarning(
                 "UserCreatedConsumer: Skipping auto-assign for user {0} due to LDAP lookup failure. " +
@@ -114,12 +111,12 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
             return;
         }
 
-        if (config.AutoManageNewUsers)
+        if (autoManageNewUsers)
         {
             try
             {
                 // Log warning only when we're actually going to assign (AutoManageNewUsers is true)
-                if (ldapLookupFailed && config.FallbackOnLdapFailure)
+                if (ldapLookupFailed && fallbackOnLdapFailure)
                 {
                     _logger.PolyglotWarning(
                         "UserCreatedConsumer: LDAP lookup failed for user {0}, falling back to auto-assignment. " +
@@ -129,16 +126,16 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
 
                 await _userLanguageService.AssignLanguageAsync(
                     user.Id,
-                    config.DefaultLanguageAlternativeId,
+                    defaultLanguageAlternativeId,
                     "auto",
                     manuallySet: false,
                     isPluginManaged: true,
                     CancellationToken.None).ConfigureAwait(false);
 
                 // Get language alternative from fresh config lookup
-                if (config.DefaultLanguageAlternativeId.HasValue)
+                if (defaultLanguageAlternativeId.HasValue)
                 {
-                    var alt = _configService.GetAlternative(config.DefaultLanguageAlternativeId.Value);
+                    var alt = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == defaultLanguageAlternativeId.Value));
                     if (alt != null)
                     {
                         _logger.PolyglotInfo(
@@ -165,7 +162,7 @@ public class UserCreatedConsumer : IEventConsumer<UserCreatedEventArgs>
                 _logger.PolyglotError(ex, "UserCreatedConsumer: Failed to auto-assign for user {0}", userEntity);
             }
         }
-        else if (ldapLookupFailed && config.FallbackOnLdapFailure)
+        else if (ldapLookupFailed && fallbackOnLdapFailure)
         {
             // FallbackOnLdapFailure is enabled (default) but AutoManageNewUsers is disabled
             // Log to clarify that no assignment occurred despite the fallback setting

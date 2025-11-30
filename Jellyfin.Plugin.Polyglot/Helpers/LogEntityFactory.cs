@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Controller.Library;
@@ -34,8 +35,11 @@ public static class LogEntityFactory
             return new LogMirror(mirrorId, sourceLibraryName, targetLibraryName);
         }
 
-        // Fetch missing data from config
-        var mirror = configService.GetMirror(mirrorId);
+        // Fetch missing data from config using generic Read
+        var mirror = configService.Read(c => c.LanguageAlternatives
+            .SelectMany(a => a.MirroredLibraries)
+            .FirstOrDefault(m => m.Id == mirrorId));
+
         if (mirror != null)
         {
             return new LogMirror(
@@ -75,8 +79,10 @@ public static class LogEntityFactory
             return new LogAlternative(alternativeId, name, languageCode);
         }
 
-        // Fetch missing data from config
-        var alternative = configService.GetAlternative(alternativeId);
+        // Fetch missing data from config using generic Read
+        var alternative = configService.Read(c => c.LanguageAlternatives
+            .FirstOrDefault(a => a.Id == alternativeId));
+
         if (alternative != null)
         {
             return new LogAlternative(
@@ -198,4 +204,3 @@ public static class LogEntityFactory
 
     #endregion
 }
-

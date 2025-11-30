@@ -371,8 +371,10 @@ public class PolyglotControllerTests : IDisposable
         result.Result.Should().BeOfType<CreatedResult>(
             "mirror creation returns 201 Created with the mirror resource per REST conventions");
         
-        alternative.MirroredLibraries.Should().ContainSingle();
-        var mirror = alternative.MirroredLibraries[0];
+        // Re-read from config since Update clones and replaces the lists
+        var updatedAlternative = _context.Configuration.LanguageAlternatives.First(a => a.Id == alternativeId);
+        updatedAlternative.MirroredLibraries.Should().ContainSingle();
+        var mirror = updatedAlternative.MirroredLibraries[0];
         mirror.SourceLibraryId.Should().Be(sourceLibraryId);
         mirror.TargetLibraryName.Should().Be("Filmes");
     }
@@ -414,7 +416,9 @@ public class PolyglotControllerTests : IDisposable
         await _controller.AddLibraryMirror(alternativeId, request);
 
         // Assert - should use default naming pattern
-        var mirror = alternative.MirroredLibraries[0];
+        // Re-read from config since Update clones and replaces the lists
+        var updatedAlternative = _context.Configuration.LanguageAlternatives.First(a => a.Id == alternativeId);
+        var mirror = updatedAlternative.MirroredLibraries[0];
         mirror.TargetLibraryName.Should().Be("Movies (Portuguese)",
             "default name should be '{SourceName} ({AlternativeName})'");
     }

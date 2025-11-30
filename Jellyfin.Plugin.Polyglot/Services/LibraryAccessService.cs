@@ -58,7 +58,7 @@ public class LibraryAccessService : ILibraryAccessService
         var userEntity = new LogUserEntity(userId, user.Username);
 
         // Check if user is managed by the plugin
-        var userConfig = _configService.GetUserLanguage(userId);
+        var userConfig = _configService.Read(c => c.UserLanguages.FirstOrDefault(u => u.UserId == userId));
         if (userConfig == null || !userConfig.IsPluginManaged)
         {
             _logger.PolyglotDebug("UpdateUserLibraryAccessAsync: User {0} is not managed by plugin", userEntity);
@@ -74,9 +74,7 @@ public class LibraryAccessService : ILibraryAccessService
         // Get the libraries the plugin determines the user should see (only managed libraries)
         var expectedManagedLibraries = GetExpectedLibraryAccess(userId).ToHashSet();
 
-        // Build final library list:
-        // 1. For MANAGED libraries: use plugin's decision
-        // 2. For UNMANAGED libraries: preserve user's current access
+        // Build final library list
         var finalLibraries = new HashSet<Guid>();
 
         // Add managed libraries that the user should see
@@ -136,7 +134,7 @@ public class LibraryAccessService : ILibraryAccessService
         }
 
         // Check if user is managed by the plugin
-        var userConfig = _configService.GetUserLanguage(userId);
+        var userConfig = _configService.Read(c => c.UserLanguages.FirstOrDefault(u => u.UserId == userId));
         if (userConfig == null || !userConfig.IsPluginManaged)
         {
             return false;
@@ -172,7 +170,7 @@ public class LibraryAccessService : ILibraryAccessService
     {
         _logger.PolyglotDebug("ReconcileAllUsersAsync: Starting reconciliation");
 
-        var userLanguages = _configService.GetUserLanguages();
+        var userLanguages = _configService.Read(c => c.UserLanguages.ToList());
         var changedCount = 0;
 
         foreach (var userLang in userLanguages)
@@ -200,8 +198,10 @@ public class LibraryAccessService : ILibraryAccessService
     /// <inheritdoc />
     public IEnumerable<Guid> GetExpectedLibraryAccess(Guid userId)
     {
-        // Check if user has a language assigned
-        var userConfig = _configService.GetUserLanguage(userId);
+        // Get all config data in one read
+        var (userConfig, alternatives) = _configService.Read(c =>
+            (c.UserLanguages.FirstOrDefault(u => u.UserId == userId),
+             c.LanguageAlternatives.ToList()));
 
         // If user is not in config or not managed by plugin, return empty
         if (userConfig == null || !userConfig.IsPluginManaged)
@@ -210,19 +210,25 @@ public class LibraryAccessService : ILibraryAccessService
         }
 
         // Get all libraries that are part of the Polyglot-managed system
-        var managedLibraries = GetManagedLibraryIds();
+        var managedLibraries = new HashSet<Guid>();
+        foreach (var alt in alternatives)
+        {
+            foreach (var mirror in alt.MirroredLibraries)
+            {
+                managedLibraries.Add(mirror.SourceLibraryId);
+                if (mirror.TargetLibraryId.HasValue)
+                {
+                    managedLibraries.Add(mirror.TargetLibraryId.Value);
+                }
+            }
+        }
 
         // Get all Jellyfin libraries
         var allLibraries = _libraryManager.GetVirtualFolders();
-
-        // Handle null library list
         if (allLibraries == null)
         {
             yield break;
         }
-
-        // Get alternatives fresh from config service
-        var alternatives = _configService.GetAlternatives();
 
         // Determine which alternative the user is assigned to (if any)
         LanguageAlternative? alternative = null;
@@ -307,7 +313,7 @@ public class LibraryAccessService : ILibraryAccessService
     private HashSet<Guid> GetManagedLibraryIds()
     {
         var managed = new HashSet<Guid>();
-        var alternatives = _configService.GetAlternatives();
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
 
         foreach (var alternative in alternatives)
         {
@@ -372,12 +378,19 @@ public class LibraryAccessService : ILibraryAccessService
             try
             {
                 // Check existing state before update to determine if this is a new enablement
-                var existingConfig = _configService.GetUserLanguage(user.Id);
+                var existingConfig = _configService.Read(c => c.UserLanguages.FirstOrDefault(u => u.UserId == user.Id));
                 var wasAlreadyManaged = existingConfig?.IsPluginManaged ?? false;
 
                 // Use atomic update/create through config service
-                _configService.UpdateOrCreateUserLanguage(user.Id, userConfig =>
+                _configService.Update(c =>
                 {
+                    var userConfig = c.UserLanguages.FirstOrDefault(u => u.UserId == user.Id);
+                    if (userConfig == null)
+                    {
+                        userConfig = new UserLanguageConfig { UserId = user.Id };
+                        c.UserLanguages.Add(userConfig);
+                    }
+
                     if (!userConfig.IsPluginManaged)
                     {
                         userConfig.IsPluginManaged = true;
@@ -422,23 +435,25 @@ public class LibraryAccessService : ILibraryAccessService
 
         var userEntity = new LogUserEntity(userId, user.Username);
 
-        // Update user config atomically - check return value to verify the update succeeded
-        var updated = _configService.UpdateUserLanguage(userId, userConfig =>
+        // Update user config atomically
+        var updated = _configService.Update(c =>
         {
+            var userConfig = c.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            if (userConfig == null) return false;
+
             userConfig.IsPluginManaged = false;
             userConfig.SetAt = DateTime.UtcNow;
             userConfig.SetBy = "admin-disabled";
+            return true;
         });
 
         if (!updated)
         {
-            // User was never in the plugin's config - this is not necessarily an error,
-            // it just means they weren't being managed by the plugin
             _logger.PolyglotDebug("DisableUserAsync: User {0} was not in plugin config, nothing to disable",
                 userEntity);
         }
 
-        // Optionally restore full access (do this regardless of whether user was in config)
+        // Optionally restore full access
         if (restoreFullAccess)
         {
             user.SetPermission(PermissionKind.EnableAllFolders, true);

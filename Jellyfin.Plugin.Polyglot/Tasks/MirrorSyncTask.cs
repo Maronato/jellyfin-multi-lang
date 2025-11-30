@@ -75,8 +75,7 @@ public class MirrorSyncTask : IScheduledTask
         }
 
         // Get alternative IDs (not objects) for iteration
-        var alternatives = _configService.GetAlternatives();
-        var alternativeIds = alternatives.Select(a => a.Id).ToList();
+        var alternativeIds = _configService.Read(c => c.LanguageAlternatives.Select(a => a.Id).ToList());
 
         if (alternativeIds.Count == 0)
         {
@@ -92,7 +91,7 @@ public class MirrorSyncTask : IScheduledTask
             cancellationToken.ThrowIfCancellationRequested();
 
             // Get fresh alternative data for logging
-            var alternative = _configService.GetAlternative(alternativeId);
+            var alternative = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId));
             if (alternative == null)
             {
                 _logger.PolyglotDebug("MirrorSyncTask: Alternative {0} no longer exists, skipping",

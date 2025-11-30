@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Jellyfin.Plugin.Polyglot.Configuration;
 using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
@@ -66,20 +67,30 @@ public class PluginTestContext : IDisposable
         applicationPathsMock.Setup(p => p.PluginsPath).Returns(_tempConfigPath);
         applicationPathsMock.Setup(p => p.DataPath).Returns(_tempConfigPath);
 
-        // Create the shared configuration that both plugin and mock will use
-        var sharedConfig = new PluginConfiguration();
+        // Create the shared configuration - this will be updated when SaveConfiguration is called
+        var currentConfig = new PluginConfiguration();
         
         var xmlSerializerMock = new Mock<IXmlSerializer>();
+        // DeserializeFromFile returns the current config (updated by SerializeToFile)
         xmlSerializerMock.Setup(s => s.DeserializeFromFile(It.IsAny<Type>(), It.IsAny<string>()))
-            .Returns(sharedConfig);
-        xmlSerializerMock.Setup(s => s.SerializeToFile(It.IsAny<object>(), It.IsAny<string>()));
+            .Returns(() => currentConfig);
+        // SerializeToFile captures the saved config so subsequent deserializations return it
+        xmlSerializerMock.Setup(s => s.SerializeToFile(It.IsAny<object>(), It.IsAny<string>()))
+            .Callback<object, string>((config, path) => 
+            {
+                if (config is PluginConfiguration pluginConfig)
+                {
+                    currentConfig = pluginConfig;
+                }
+            });
 
         // Set up application host with service resolution
         ApplicationHostMock = new Mock<IApplicationHost>();
         MirrorServiceMock = new Mock<IMirrorService>();
         
-        // Create ConfigurationService mock that delegates to the shared config
-        ConfigurationServiceMock = MockFactory.CreateConfigurationService(sharedConfig);
+        // Create ConfigurationService mock that delegates to the live plugin config
+        // Note: We'll update this after plugin is created to use the actual Configuration
+        ConfigurationServiceMock = new Mock<IConfigurationService>();
         
         // Wire up Resolve<IMirrorService>() to return our mock
         ApplicationHostMock
@@ -104,6 +115,61 @@ public class PluginTestContext : IDisposable
         {
             throw new InvalidOperationException("Plugin.Instance was not set correctly");
         }
+
+        // Set up ConfigurationServiceMock to use the live plugin Configuration
+        // This is needed for tests that use the mock config service alongside PluginTestContext
+        SetupConfigurationServiceMock();
+    }
+
+    /// <summary>
+    /// Creates a deep clone of the configuration using JSON serialization.
+    /// Matches the behavior of the real ConfigurationService.
+    /// </summary>
+    private static PluginConfiguration CloneConfig(PluginConfiguration config)
+    {
+        var json = JsonSerializer.Serialize(config);
+        return JsonSerializer.Deserialize<PluginConfiguration>(json)!;
+    }
+
+    private void SetupConfigurationServiceMock()
+    {
+        // Setup Read to return from a cloned snapshot of plugin configuration
+        // This matches the real ConfigurationService behavior (lines 44-46)
+        // Use DynamicInvoke to handle value types (bool, int, etc.)
+        ConfigurationServiceMock.Setup(m => m.Read(It.IsAny<Func<PluginConfiguration, It.IsAnyType>>()))
+            .Returns((Delegate selector) =>
+            {
+                var snapshot = CloneConfig(_plugin.Configuration);
+                return selector.DynamicInvoke(snapshot);
+            });
+
+        // Setup Update(Action) to apply mutations to a cloned config
+        ConfigurationServiceMock.Setup(m => m.Update(It.IsAny<Action<PluginConfiguration>>()))
+            .Callback((Action<PluginConfiguration> mutation) =>
+            {
+                // Clone before mutation (matches real service line 65)
+                var snapshot = CloneConfig(_plugin.Configuration);
+                mutation(snapshot);
+                // Clone again to break references from objects added during mutation (matches line 78)
+                var toSave = CloneConfig(snapshot);
+                _plugin.UpdateConfiguration(toSave);
+            });
+
+        // Setup Update(Func<bool>) to apply mutations conditionally
+        ConfigurationServiceMock.Setup(m => m.Update(It.IsAny<Func<PluginConfiguration, bool>>()))
+            .Returns((Func<PluginConfiguration, bool> mutation) =>
+            {
+                // Clone before mutation (matches real service line 65)
+                var snapshot = CloneConfig(_plugin.Configuration);
+                if (!mutation(snapshot))
+                {
+                    return false;
+                }
+                // Clone again to break references from objects added during mutation (matches line 78)
+                var toSave = CloneConfig(snapshot);
+                _plugin.UpdateConfiguration(toSave);
+                return true;
+            });
     }
 
     /// <summary>

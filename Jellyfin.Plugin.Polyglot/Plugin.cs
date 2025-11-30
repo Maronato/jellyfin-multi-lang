@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.Polyglot.Configuration;
 using Jellyfin.Plugin.Polyglot.Helpers;
-using Jellyfin.Plugin.Polyglot.Models;
 using Jellyfin.Plugin.Polyglot.Services;
 using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
@@ -74,14 +73,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         };
     }
 
-    /// <summary>
-    /// Saves the plugin configuration.
-    /// </summary>
-    public new void SaveConfiguration()
-    {
-        SaveConfiguration(Configuration);
-    }
-
     /// <inheritdoc />
     public override void OnUninstalling()
     {
@@ -93,10 +84,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             var mirrorService = _applicationHost.Resolve<IMirrorService>();
             var configService = _applicationHost.Resolve<IConfigurationService>();
 
-            // Get mirror IDs (not objects) to iterate - prevents stale reference issues
-            var mirrorIds = configService.GetAlternatives()
+            // Get mirror IDs to iterate
+            var mirrorIds = configService.Read(c => c.LanguageAlternatives
                 .SelectMany(a => a.MirroredLibraries.Select(m => new { m.Id, m.TargetLibraryName }))
-                .ToList();
+                .ToList());
 
             _logger.PolyglotInfo("Plugin OnUninstalling: Deleting {0} mirrors", mirrorIds.Count);
 
@@ -125,8 +116,13 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 }
             }
 
-            // Clear all configuration using the config service
-            configService.ClearAllConfiguration();
+            // Clear all configuration
+            configService.Update(c =>
+            {
+                c.LanguageAlternatives.Clear();
+                c.UserLanguages.Clear();
+                c.LdapGroupMappings.Clear();
+            });
 
             _logger.PolyglotInfo("Plugin OnUninstalling: Cleanup completed");
         }

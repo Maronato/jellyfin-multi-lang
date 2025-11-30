@@ -179,7 +179,7 @@ public class LibraryChangedConsumer : IHostedService, IDisposable
             // Ensure users have access to sources that no longer have mirrors
             if (result.SourcesWithoutMirrors.Count > 0)
             {
-                var userLanguages = _configService.GetUserLanguages();
+                var userLanguages = _configService.Read(c => c.UserLanguages.ToList());
                 foreach (var userConfig in userLanguages.Where(u => u.IsPluginManaged))
                 {
                     try

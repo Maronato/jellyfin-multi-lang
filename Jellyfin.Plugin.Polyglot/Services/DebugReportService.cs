@@ -166,31 +166,34 @@ public partial class DebugReportService : IDebugReportService
 
     private ConfigurationSummary GetConfigurationSummary()
     {
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            return new ConfigurationSummary();
-        }
-
-        // Use thread-safe deep copy methods for collection access
-        var alternatives = _configService.GetAlternatives();
-        var userLanguages = _configService.GetUserLanguages();
-
-        var totalMirrors = alternatives.Sum(a => a.MirroredLibraries.Count);
-        var managedUsers = userLanguages.Count(u => u.IsPluginManaged);
-
-        // Use thread-safe accessors for collection counts (HashSet is not thread-safe)
-        var excludedExtensionCount = _configService.GetExcludedExtensions().Count;
-        var excludedDirectoryCount = _configService.GetExcludedDirectories().Count;
+        var (
+            alternativeCount,
+            totalMirrors,
+            managedUsers,
+            autoManageNewUsers,
+            syncAfterLibraryScan,
+            ldapEnabled,
+            excludedExtensionCount,
+            excludedDirectoryCount
+        ) = _configService.Read(c => (
+            c.LanguageAlternatives.Count,
+            c.LanguageAlternatives.Sum(a => a.MirroredLibraries.Count),
+            c.UserLanguages.Count(u => u.IsPluginManaged),
+            c.AutoManageNewUsers,
+            c.SyncMirrorsAfterLibraryScan,
+            c.EnableLdapIntegration,
+            c.ExcludedExtensions.Count,
+            c.ExcludedDirectories.Count
+        ));
 
         return new ConfigurationSummary
         {
-            LanguageAlternativeCount = alternatives.Count,
+            LanguageAlternativeCount = alternativeCount,
             TotalMirrorCount = totalMirrors,
             ManagedUserCount = managedUsers,
-            AutoManageNewUsers = config.AutoManageNewUsers,
-            SyncAfterLibraryScan = config.SyncMirrorsAfterLibraryScan,
-            LdapIntegrationEnabled = config.EnableLdapIntegration,
+            AutoManageNewUsers = autoManageNewUsers,
+            SyncAfterLibraryScan = syncAfterLibraryScan,
+            LdapIntegrationEnabled = ldapEnabled,
             ExcludedExtensionCount = excludedExtensionCount,
             ExcludedDirectoryCount = excludedDirectoryCount
         };
@@ -198,14 +201,7 @@ public partial class DebugReportService : IDebugReportService
 
     private async Task<List<MirrorHealthInfo>> GetMirrorHealthAsync(DebugReportOptions options, CancellationToken cancellationToken)
     {
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            return new List<MirrorHealthInfo>();
-        }
-
-        // Use thread-safe deep copy for collection access
-        var alternatives = _configService.GetAlternatives();
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
 
         var results = new List<MirrorHealthInfo>();
         var existingLibraryIds = GetExistingLibraryIds();
@@ -289,15 +285,8 @@ public partial class DebugReportService : IDebugReportService
 
     private List<UserDistributionInfo> GetUserDistribution(DebugReportOptions options)
     {
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            return new List<UserDistributionInfo>();
-        }
-
-        // Use thread-safe deep copies for collection access
-        var alternatives = _configService.GetAlternatives();
-        var userLanguages = _configService.GetUserLanguages();
+        var (userLanguages, alternatives) = _configService.Read(c =>
+            (c.UserLanguages.ToList(), c.LanguageAlternatives.ToList()));
 
         var distribution = new List<UserDistributionInfo>();
 
@@ -353,15 +342,8 @@ public partial class DebugReportService : IDebugReportService
 
     private List<UserDetailInfo> GetUserDetails(DebugReportOptions options)
     {
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            return new List<UserDetailInfo>();
-        }
-
-        // Use thread-safe deep copies for collection access
-        var alternatives = _configService.GetAlternatives();
-        var userLanguages = _configService.GetUserLanguages();
+        var (userLanguages, alternatives) = _configService.Read(c =>
+            (c.UserLanguages.ToList(), c.LanguageAlternatives.ToList()));
 
         var details = new List<UserDetailInfo>();
         var altIndex = 0;
@@ -428,9 +410,7 @@ public partial class DebugReportService : IDebugReportService
     private List<LibrarySummaryInfo> GetLibrarySummaries(DebugReportOptions options)
     {
         var virtualFolders = _libraryManager.GetVirtualFolders();
-
-        // Use thread-safe deep copy for collection access
-        var alternatives = _configService.GetAlternatives();
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
 
         // Build set of mirror library IDs
         var mirrorIds = new HashSet<Guid>();
@@ -487,7 +467,6 @@ public partial class DebugReportService : IDebugReportService
         }
         catch (Exception ex)
         {
-            // Log and return empty list if we can't enumerate plugins (e.g., DI loop)
             _logger.PolyglotWarning(ex, "Could not enumerate other plugins for debug report");
             return new List<PluginSummaryInfo>
             {
@@ -506,24 +485,17 @@ public partial class DebugReportService : IDebugReportService
 
         var logs = LogBuffer
             .Where(e => e.Timestamp >= cutoff)
-            .OrderBy(e => e.Timestamp) // Process in chronological order for consistent entity numbering
+            .OrderBy(e => e.Timestamp)
             .ToList();
 
-        // Path sanitizer function for legacy logs without entity references
         Func<string, string> pathSanitizer = msg => PathPattern().Replace(msg, "[path]");
 
-        // Render each log with privacy-aware entity formatting
         var renderedLogs = new List<LogEntryInfo>(logs.Count);
         foreach (var originalLog in logs)
         {
-            // Clone the log entry to avoid mutating shared state in LogBuffer
             var log = originalLog.Clone();
-
-            // Render the message using entity privacy settings
-            // Pass path sanitizer to handle legacy logs without entity references
             log.Message = log.RenderMessage(options, entityCounters, pathSanitizer);
 
-            // Sanitize exception messages if paths should be hidden
             if (log.Exception != null && !options.IncludeFilePaths)
             {
                 log.Exception = SanitizeErrorMessage(log.Exception);
@@ -532,7 +504,6 @@ public partial class DebugReportService : IDebugReportService
             renderedLogs.Add(log);
         }
 
-        // Return in reverse chronological order for display
         renderedLogs.Reverse();
         return renderedLogs;
     }
@@ -547,8 +518,7 @@ public partial class DebugReportService : IDebugReportService
 
     private List<FilesystemDiagnostics> GetFilesystemDiagnostics(DebugReportOptions options)
     {
-        // Use thread-safe deep copy for collection access
-        var alternatives = _configService.GetAlternatives();
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
 
         var results = new List<FilesystemDiagnostics>();
         var checkedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -622,7 +592,6 @@ public partial class DebugReportService : IDebugReportService
 
         try
         {
-            // Get drive info for disk space
             var driveInfo = new DriveInfo(Path.GetPathRoot(path) ?? path);
             if (driveInfo.IsReady)
             {
@@ -632,7 +601,6 @@ public partial class DebugReportService : IDebugReportService
                 diag.AvailableSpace = FormatBytes(driveInfo.AvailableFreeSpace);
                 diag.FilesystemType = driveInfo.DriveFormat;
 
-                // Check if hardlinks are supported (NTFS, ext4, etc. support them; FAT32 doesn't)
                 var fsType = driveInfo.DriveFormat.ToUpperInvariant();
                 diag.HardlinksSupported = fsType switch
                 {
@@ -648,7 +616,7 @@ public partial class DebugReportService : IDebugReportService
                     "FAT32" => false,
                     "FAT" => false,
                     "EXFAT" => false,
-                    _ => null // Unknown
+                    _ => null
                 };
             }
         }
@@ -662,13 +630,11 @@ public partial class DebugReportService : IDebugReportService
 
     private async Task<HardlinkVerification?> VerifyHardlinksAsync(DebugReportOptions options, CancellationToken cancellationToken)
     {
-        // Use thread-safe deep copy for collection access
-        var alternatives = _configService.GetAlternatives();
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
 
         var verification = new HardlinkVerification();
         var samples = new List<HardlinkSample>();
 
-        // Find some files in mirror directories to verify
         foreach (var alt in alternatives)
         {
             foreach (var mirror in alt.MirroredLibraries)
@@ -682,7 +648,6 @@ public partial class DebugReportService : IDebugReportService
 
                 try
                 {
-                    // Get up to 3 sample files from this mirror
                     var files = Directory.EnumerateFiles(mirror.TargetPath, "*", SearchOption.AllDirectories)
                         .Where(f => !f.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase) &&
                                     !f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
@@ -694,7 +659,7 @@ public partial class DebugReportService : IDebugReportService
                         var sample = VerifyHardlink(file, options);
                         samples.Add(sample);
 
-                        if (samples.Count >= 10) // Max 10 samples total
+                        if (samples.Count >= 10)
                         {
                             break;
                         }
@@ -762,8 +727,6 @@ public partial class DebugReportService : IDebugReportService
                 return sample;
             }
 
-            // On Unix, we can check the link count
-            // On Windows, we need to use platform-specific APIs
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 sample.LinkCount = GetWindowsHardlinkCount(filePath);
@@ -785,8 +748,6 @@ public partial class DebugReportService : IDebugReportService
 
     private static int GetUnixHardlinkCount(string filePath)
     {
-        // On Unix/Linux/macOS, we can use the stat command to get link count
-        // This is a simple approach that works across platforms without Mono.Unix
         try
         {
             var process = new System.Diagnostics.Process
@@ -795,8 +756,8 @@ public partial class DebugReportService : IDebugReportService
                 {
                     FileName = "stat",
                     Arguments = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                        ? $"-f %l \"{filePath}\""  // macOS format
-                        : $"-c %h \"{filePath}\"", // Linux format
+                        ? $"-f %l \"{filePath}\""
+                        : $"-c %h \"{filePath}\"",
                     RedirectStandardOutput = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
@@ -816,13 +777,11 @@ public partial class DebugReportService : IDebugReportService
             // Ignore errors
         }
 
-        return 1; // Assume single link if we can't check
+        return 1;
     }
 
     private static int GetWindowsHardlinkCount(string filePath)
     {
-        // On Windows, getting accurate link count requires P/Invoke to GetFileInformationByHandle
-        // For simplicity, we'll use fsutil which requires admin rights, or just return unknown
         try
         {
             var process = new System.Diagnostics.Process
@@ -840,13 +799,11 @@ public partial class DebugReportService : IDebugReportService
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
 
-            // Count the lines (each line is a hardlink path)
             var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             return lines.Length > 0 ? lines.Length : 1;
         }
         catch
         {
-            // fsutil requires admin rights, fallback to assuming it's a hardlink if file exists
             return new FileInfo(filePath).Exists ? 2 : 0;
         }
     }
@@ -895,10 +852,8 @@ public partial class DebugReportService : IDebugReportService
             return null;
         }
 
-        // Remove file paths
         error = PathPattern().Replace(error, "[path]");
 
-        // Truncate long messages
         if (error.Length > 200)
         {
             error = error.Substring(0, 197) + "...";
@@ -944,7 +899,6 @@ public partial class DebugReportService : IDebugReportService
         {
             sb.AppendLine("## Mirror Health");
 
-            // Include path columns if paths are included
             if (report.Options.IncludeFilePaths)
             {
                 sb.AppendLine("| Alternative | Source | Source Path | Target Path | Status | Last Sync | Files | SrcLib? | SrcPath? | TgtLib? | TgtPath? | Writable? | Error |");
@@ -1137,4 +1091,3 @@ public partial class DebugReportService : IDebugReportService
         return sb.ToString();
     }
 }
-

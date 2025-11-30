@@ -52,8 +52,11 @@ public class UserLanguageSyncTask : IScheduledTask
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
     {
         // Parse the configured time (default 3:00 AM)
-        var config = _configService.GetConfiguration();
-        var timeString = config?.UserReconciliationTime ?? "03:00";
+        var timeString = _configService.Read(c => c.UserReconciliationTime);
+        if (string.IsNullOrEmpty(timeString))
+        {
+            timeString = "03:00";
+        }
 
         if (!TimeSpan.TryParse(timeString, out var time))
         {
@@ -70,13 +73,6 @@ public class UserLanguageSyncTask : IScheduledTask
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         _logger.PolyglotInfo("UserLanguageSyncTask: Starting user sync");
-
-        var config = _configService.GetConfiguration();
-        if (config == null)
-        {
-            _logger.PolyglotWarning("UserLanguageSyncTask: Configuration not available");
-            return;
-        }
 
         SafeReportProgress(progress, 0);
 

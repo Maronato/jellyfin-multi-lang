@@ -59,7 +59,19 @@ public class MirrorService : IMirrorService
             _configService.CreateLogMirror(mirrorId));
 
         // Get fresh snapshot of mirror data for the operation
-        var mirrorData = _configService.GetMirrorWithAlternative(mirrorId);
+        var mirrorData = _configService.Read(c =>
+        {
+            foreach (var alt in c.LanguageAlternatives)
+            {
+                var m = alt.MirroredLibraries.FirstOrDefault(x => x.Id == mirrorId);
+                if (m != null)
+                {
+                    return new { Mirror = m, AlternativeId = alt.Id };
+                }
+            }
+            return null;
+        });
+
         if (mirrorData == null)
         {
             _logger.PolyglotWarning("CreateMirrorAsync: Mirror {0} not found in configuration",
@@ -67,11 +79,11 @@ public class MirrorService : IMirrorService
             throw new InvalidOperationException($"Mirror {mirrorId} not found in configuration");
         }
 
-        var (mirror, actualAlternativeId) = mirrorData.Value;
+        var mirror = mirrorData.Mirror;
+        var actualAlternativeId = mirrorData.AlternativeId;
         var mirrorEntity = new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName);
 
         // Validate the provided alternativeId matches the mirror's actual parent
-        // Throw if mismatched to expose programming errors in callers rather than silently correcting
         if (actualAlternativeId != alternativeId)
         {
             _logger.PolyglotError(
@@ -86,7 +98,7 @@ public class MirrorService : IMirrorService
                 nameof(alternativeId));
         }
 
-        var alternative = _configService.GetAlternative(alternativeId);
+        var alternative = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId));
         if (alternative == null)
         {
             _logger.PolyglotWarning("CreateMirrorAsync: Alternative {0} not found",
@@ -109,10 +121,19 @@ public class MirrorService : IMirrorService
         try
         {
             // Update status to syncing atomically
-            _configService.UpdateMirror(mirrorId, m => m.Status = SyncStatus.Syncing);
+            _configService.Update(c =>
+            {
+                var m = c.LanguageAlternatives
+                    .SelectMany(a => a.MirroredLibraries)
+                    .FirstOrDefault(x => x.Id == mirrorId);
+                if (m != null) m.Status = SyncStatus.Syncing;
+            });
 
             // Re-fetch mirror data after status update to get current state
-            var currentMirror = _configService.GetMirror(mirrorId);
+            var currentMirror = _configService.Read(c => c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(m => m.Id == mirrorId));
+
             if (currentMirror == null)
             {
                 throw new InvalidOperationException($"Mirror {mirrorId} was removed during operation");
@@ -143,26 +164,22 @@ public class MirrorService : IMirrorService
             }
 
             // Create target directory if it doesn't exist
-            // Track state for cleanup decisions on failure
             if (!Directory.Exists(currentMirror.TargetPath))
             {
                 Directory.CreateDirectory(currentMirror.TargetPath);
                 createdTargetDirectory = true;
-                directoryWasEmpty = true; // New directory is by definition empty
+                directoryWasEmpty = true;
                 _logger.PolyglotDebug("CreateMirrorAsync: Created target directory {0}",
                     new LogPathEntity(currentMirror.TargetPath, "target"));
             }
             else
             {
-                // Directory exists - check if it's empty (validation should have ensured this)
-                // If empty, we can safely clean up any files we create on failure
                 try
                 {
                     directoryWasEmpty = !Directory.EnumerateFileSystemEntries(currentMirror.TargetPath).Any();
                 }
                 catch
                 {
-                    // If we can't check, assume not empty to be safe
                     directoryWasEmpty = false;
                 }
 
@@ -180,20 +197,28 @@ public class MirrorService : IMirrorService
             _logger.PolyglotDebug("CreateMirrorAsync: Mirrored {0} files", fileCount);
 
             // Create Jellyfin library if not already created
-            // Re-fetch to check current TargetLibraryId state
-            currentMirror = _configService.GetMirror(mirrorId);
+            currentMirror = _configService.Read(c => c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(m => m.Id == mirrorId));
+
             if (currentMirror != null && currentMirror.TargetLibraryId == null)
             {
                 await CreateJellyfinLibraryAsync(alternativeId, mirrorId, cancellationToken).ConfigureAwait(false);
             }
 
             // Update mirror with success status atomically
-            _configService.UpdateMirror(mirrorId, m =>
+            _configService.Update(c =>
             {
-                m.Status = SyncStatus.Synced;
-                m.LastSyncedAt = DateTime.UtcNow;
-                m.LastSyncFileCount = fileCount;
-                m.LastError = null;
+                var m = c.LanguageAlternatives
+                    .SelectMany(a => a.MirroredLibraries)
+                    .FirstOrDefault(x => x.Id == mirrorId);
+                if (m != null)
+                {
+                    m.Status = SyncStatus.Synced;
+                    m.LastSyncedAt = DateTime.UtcNow;
+                    m.LastSyncFileCount = fileCount;
+                    m.LastError = null;
+                }
             });
 
             _logger.PolyglotInfo("CreateMirrorAsync: Mirror created successfully with {0} files", fileCount);
@@ -203,16 +228,14 @@ public class MirrorService : IMirrorService
             _logger.PolyglotError(ex, "CreateMirrorAsync: Failed to create mirror for {0}",
                 new LogMirrorEntity(mirrorId, mirror.SourceLibraryName, mirror.TargetLibraryName));
 
-            // Clean up any orphaned resources that may have been created before the failure
-            // Re-fetch to get the current state (may have been set even if later steps failed)
-            var failedMirror = _configService.GetMirror(mirrorId);
+            // Clean up any orphaned resources
+            var failedMirror = _configService.Read(c => c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(m => m.Id == mirrorId));
+
             if (failedMirror != null)
             {
                 // Clean up orphaned Jellyfin library if it was created
-                // We try two approaches:
-                // 1. If TargetLibraryId was saved, use that for cleanup
-                // 2. If TargetLibraryId is null but the library may exist (created but ID not saved),
-                //    try to find and remove it by name as a fallback
                 if (failedMirror.TargetLibraryId.HasValue)
                 {
                     try
@@ -229,8 +252,6 @@ public class MirrorService : IMirrorService
                 }
                 else if (!string.IsNullOrEmpty(failedMirror.TargetLibraryName))
                 {
-                    // Fallback: Library may have been created but TargetLibraryId wasn't saved yet
-                    // This can happen if failure occurs between AddVirtualFolder and UpdateMirror
                     var orphanedLibrary = _libraryManager.GetVirtualFolders()
                         .FirstOrDefault(f => string.Equals(f.Name, failedMirror.TargetLibraryName, StringComparison.OrdinalIgnoreCase));
 
@@ -254,15 +275,11 @@ public class MirrorService : IMirrorService
                 }
 
                 // Clean up files/directory on failure
-                // Safe to clean if: (1) we created the directory, OR (2) directory was empty when we started
-                // The validation ensures non-empty directories are rejected, so any files present after
-                // a failure in an originally-empty directory must be files we created
                 if (!string.IsNullOrEmpty(failedMirror.TargetPath) && Directory.Exists(failedMirror.TargetPath))
                 {
                     var targetPathEntity = new LogPathEntity(failedMirror.TargetPath, "target");
                     if (createdTargetDirectory)
                     {
-                        // We created the directory - delete the entire directory
                         try
                         {
                             Directory.Delete(failedMirror.TargetPath, recursive: true);
@@ -275,7 +292,6 @@ public class MirrorService : IMirrorService
                     }
                     else if (directoryWasEmpty)
                     {
-                        // Pre-existing but empty directory - clean up any files we created but keep the directory
                         try
                         {
                             foreach (var entry in Directory.EnumerateFileSystemEntries(failedMirror.TargetPath))
@@ -311,7 +327,6 @@ public class MirrorService : IMirrorService
                     }
                     else
                     {
-                        // Pre-existing directory that wasn't empty - don't touch it
                         _logger.PolyglotWarning(
                             "CreateMirrorAsync: Not cleaning up pre-existing non-empty directory {0} after failure to prevent data loss. " +
                             "Manual cleanup may be required.",
@@ -321,11 +336,15 @@ public class MirrorService : IMirrorService
             }
 
             // Update mirror with error status atomically
-            // Log if this fails (mirror may have been deleted), but still re-throw original exception
-            var errorStatusUpdated = _configService.UpdateMirror(mirrorId, m =>
+            var errorStatusUpdated = _configService.Update(c =>
             {
+                var m = c.LanguageAlternatives
+                    .SelectMany(a => a.MirroredLibraries)
+                    .FirstOrDefault(x => x.Id == mirrorId);
+                if (m == null) return false;
                 m.Status = SyncStatus.Error;
                 m.LastError = ex.Message;
+                return true;
             });
 
             if (!errorStatusUpdated)
@@ -350,7 +369,10 @@ public class MirrorService : IMirrorService
             _configService.CreateLogMirror(mirrorId));
 
         // Get fresh snapshot of mirror data
-        var mirror = _configService.GetMirror(mirrorId);
+        var mirror = _configService.Read(c => c.LanguageAlternatives
+            .SelectMany(a => a.MirroredLibraries)
+            .FirstOrDefault(m => m.Id == mirrorId));
+
         if (mirror == null)
         {
             _logger.PolyglotWarning("SyncMirrorAsync: Mirror {0} not found",
@@ -367,10 +389,19 @@ public class MirrorService : IMirrorService
         try
         {
             // Update status to syncing atomically
-            _configService.UpdateMirror(mirrorId, m => m.Status = SyncStatus.Syncing);
+            _configService.Update(c =>
+            {
+                var m = c.LanguageAlternatives
+                    .SelectMany(a => a.MirroredLibraries)
+                    .FirstOrDefault(x => x.Id == mirrorId);
+                if (m != null) m.Status = SyncStatus.Syncing;
+            });
 
             // Re-fetch for current state
-            mirror = _configService.GetMirror(mirrorId);
+            mirror = _configService.Read(c => c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(m => m.Id == mirrorId));
+
             if (mirror == null)
             {
                 throw new InvalidOperationException($"Mirror {mirrorId} was removed during operation");
@@ -417,7 +448,6 @@ public class MirrorService : IMirrorService
             var filesToAdd = new List<string>();
             var filesToRemove = new List<string>();
 
-            // Check for new or modified files
             foreach (var kvp in sourceFiles)
             {
                 var relativePath = kvp.Key;
@@ -425,7 +455,6 @@ public class MirrorService : IMirrorService
 
                 if (targetFiles.TryGetValue(relativePath, out var targetSig))
                 {
-                    // File exists in both - check if modified
                     if (sourceSig.Size != targetSig.Size || sourceSig.ModifiedTicks != targetSig.ModifiedTicks)
                     {
                         _logger.PolyglotDebug("SyncMirrorAsync: File modified: {0}",
@@ -440,7 +469,6 @@ public class MirrorService : IMirrorService
                 }
             }
 
-            // Check for deleted files
             foreach (var kvp in targetFiles)
             {
                 if (!sourceFiles.ContainsKey(kvp.Key))
@@ -528,12 +556,18 @@ public class MirrorService : IMirrorService
             }
 
             // Update mirror with success status atomically
-            _configService.UpdateMirror(mirrorId, m =>
+            _configService.Update(c =>
             {
-                m.Status = SyncStatus.Synced;
-                m.LastSyncedAt = DateTime.UtcNow;
-                m.LastSyncFileCount = sourceFiles.Count;
-                m.LastError = null;
+                var m = c.LanguageAlternatives
+                    .SelectMany(a => a.MirroredLibraries)
+                    .FirstOrDefault(x => x.Id == mirrorId);
+                if (m != null)
+                {
+                    m.Status = SyncStatus.Synced;
+                    m.LastSyncedAt = DateTime.UtcNow;
+                    m.LastSyncFileCount = sourceFiles.Count;
+                    m.LastError = null;
+                }
             });
 
             _logger.PolyglotInfo("SyncMirrorAsync: Sync completed - {0} added, {1} removed", filesToAdd.Count, filesToRemove.Count);
@@ -544,11 +578,15 @@ public class MirrorService : IMirrorService
             _logger.PolyglotError(ex, "SyncMirrorAsync: Failed to sync mirror {0}", mirrorEntity);
 
             // Update mirror with error status atomically
-            // Log if this fails (mirror may have been deleted), but still re-throw original exception
-            var errorStatusUpdated = _configService.UpdateMirror(mirrorId, m =>
+            var errorStatusUpdated = _configService.Update(c =>
             {
+                var m = c.LanguageAlternatives
+                    .SelectMany(a => a.MirroredLibraries)
+                    .FirstOrDefault(x => x.Id == mirrorId);
+                if (m == null) return false;
                 m.Status = SyncStatus.Error;
                 m.LastError = ex.Message;
+                return true;
             });
 
             if (!errorStatusUpdated)
@@ -575,12 +613,15 @@ public class MirrorService : IMirrorService
         var result = new DeleteMirrorResult();
 
         // Get fresh snapshot of mirror data
-        var mirror = _configService.GetMirror(mirrorId);
+        var mirror = _configService.Read(c => c.LanguageAlternatives
+            .SelectMany(a => a.MirroredLibraries)
+            .FirstOrDefault(m => m.Id == mirrorId));
+
         if (mirror == null)
         {
             _logger.PolyglotWarning("DeleteMirrorAsync: Mirror {0} not found, nothing to delete",
                 _configService.CreateLogMirror(mirrorId));
-            result.RemovedFromConfig = true; // Already gone
+            result.RemovedFromConfig = true;
             return result;
         }
 
@@ -604,7 +645,6 @@ public class MirrorService : IMirrorService
                 }
                 catch (Exception ex)
                 {
-                    // Check if library still exists after the failure
                     var libraryStillExists = _libraryManager.GetVirtualFolders()
                         .Any(f => Guid.TryParse(f.ItemId, out var id) && id == mirror.TargetLibraryId.Value);
 
@@ -625,7 +665,6 @@ public class MirrorService : IMirrorService
                     }
                     else
                     {
-                        // Library doesn't exist anymore - probably deleted externally
                         _logger.PolyglotDebug(
                             "DeleteMirrorAsync: RemoveVirtualFolder failed for {0} but library no longer exists",
                             targetLibraryEntity);
@@ -635,11 +674,11 @@ public class MirrorService : IMirrorService
             }
             else if (!deleteLibrary)
             {
-                result.LibraryDeleted = false; // Not requested
+                result.LibraryDeleted = false;
             }
             else
             {
-                result.LibraryDeleted = true; // No library to delete (TargetLibraryId was null)
+                result.LibraryDeleted = true;
             }
 
             // Delete mirror files
@@ -670,16 +709,27 @@ public class MirrorService : IMirrorService
             }
             else if (!deleteFiles)
             {
-                result.FilesDeleted = false; // Not requested
+                result.FilesDeleted = false;
             }
             else
             {
-                result.FilesDeleted = true; // Directory didn't exist
+                result.FilesDeleted = true;
             }
 
             // Remove mirror from configuration
-            // With forceConfigRemoval, we always remove even if above operations failed
-            _configService.RemoveMirror(mirrorId);
+            _configService.Update(c =>
+            {
+                foreach (var alt in c.LanguageAlternatives)
+                {
+                    var m = alt.MirroredLibraries.FirstOrDefault(x => x.Id == mirrorId);
+                    if (m != null)
+                    {
+                        alt.MirroredLibraries.Remove(m);
+                        break;
+                    }
+                }
+            });
+
             result.RemovedFromConfig = true;
             _logger.PolyglotDebug("DeleteMirrorAsync: Removed mirror {0} from configuration", mirrorEntity);
 
@@ -714,7 +764,7 @@ public class MirrorService : IMirrorService
         var result = new SyncAllResult();
 
         // Get fresh snapshot of alternative
-        var alternative = _configService.GetAlternative(alternativeId);
+        var alternative = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId));
         if (alternative == null)
         {
             _logger.PolyglotWarning("SyncAllMirrorsAsync: Alternative {0} not found",
@@ -726,7 +776,7 @@ public class MirrorService : IMirrorService
         var alternativeEntity = new LogAlternativeEntity(alternativeId, alternative.Name, alternative.LanguageCode);
         _logger.PolyglotInfo("SyncAllMirrorsAsync: Syncing all mirrors for alternative {0}", alternativeEntity);
 
-        // Get mirror IDs (not objects) to iterate
+        // Get mirror IDs to iterate
         var mirrorIds = alternative.MirroredLibraries.Select(m => m.Id).ToList();
         result.TotalMirrors = mirrorIds.Count;
 
@@ -765,7 +815,6 @@ public class MirrorService : IMirrorService
                 _logger.PolyglotError(ex, "SyncAllMirrorsAsync: Failed to sync mirror {0}",
                     _configService.CreateLogMirror(mirrorId));
                 result.MirrorsFailed++;
-                // Continue with other mirrors
             }
         }
 
@@ -820,8 +869,6 @@ public class MirrorService : IMirrorService
             }
         }
 
-        // Prevent data loss: reject target paths that already contain files
-        // This protects against accidental deletion of pre-existing content if mirror creation fails
         if (Directory.Exists(targetPath))
         {
             try
@@ -848,7 +895,7 @@ public class MirrorService : IMirrorService
     public IEnumerable<LibraryInfo> GetJellyfinLibraries()
     {
         var virtualFolders = _libraryManager.GetVirtualFolders();
-        var alternatives = _configService.GetAlternatives();
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
 
         foreach (var folder in virtualFolders)
         {
@@ -862,7 +909,6 @@ public class MirrorService : IMirrorService
                 MetadataCountryCode = folder.LibraryOptions?.MetadataCountryCode
             };
 
-            // Check if this is a mirror library
             foreach (var alt in alternatives)
             {
                 var mirror = alt.MirroredLibraries.FirstOrDefault(m => m.TargetLibraryId == libraryInfo.Id);
@@ -889,16 +935,15 @@ public class MirrorService : IMirrorService
             .Select(l => l.Id)
             .ToHashSet();
 
-        // Build list of mirrors to delete (by ID, not reference)
+        // Build list of mirrors to delete
         var mirrorsToDelete = new List<(Guid AlternativeId, Guid MirrorId, string MirrorName, Guid SourceLibraryId, string Reason)>();
 
-        // Threshold for considering a pending mirror as "stuck" (failed creation)
-        // If a mirror has been in Pending/Error state with no TargetLibraryId for more than this duration,
-        // it's likely a ghost from a failed creation that wasn't cleaned up properly
         var stuckMirrorThreshold = TimeSpan.FromMinutes(30);
         var now = DateTime.UtcNow;
 
-        foreach (var alternative in _configService.GetAlternatives())
+        var alternatives = _configService.Read(c => c.LanguageAlternatives.ToList());
+
+        foreach (var alternative in alternatives)
         {
             foreach (var mirror in alternative.MirroredLibraries)
             {
@@ -924,16 +969,12 @@ public class MirrorService : IMirrorService
                     continue;
                 }
 
-                // Detect "ghost" mirrors: TargetLibraryId is null AND mirror is stuck in Pending/Error state
-                // These are remnants from failed creation attempts where cleanup didn't complete
                 if (!mirror.TargetLibraryId.HasValue &&
                     (mirror.Status == SyncStatus.Pending || mirror.Status == SyncStatus.Error))
                 {
-                    // Check if this mirror has been stuck for a while
-                    // Use LastSyncedAt if available, otherwise assume it's old enough to clean up
                     var mirrorAge = mirror.LastSyncedAt.HasValue
                         ? now - mirror.LastSyncedAt.Value
-                        : stuckMirrorThreshold; // Treat mirrors with no timestamp as old enough
+                        : stuckMirrorThreshold;
 
                     if (mirrorAge >= stuckMirrorThreshold)
                     {
@@ -949,31 +990,26 @@ public class MirrorService : IMirrorService
 
         _logger.PolyglotDebug("CleanupOrphanedMirrorsAsync: Found {0} orphaned mirrors", mirrorsToDelete.Count);
 
-        // Delete orphaned mirrors - DeleteMirrorAsync now handles config removal
-        // Use forceConfigRemoval=true for cleanup to ensure orphans are always removed from config
         foreach (var (alternativeId, mirrorId, mirrorName, sourceLibraryId, reason) in mirrorsToDelete)
         {
-            // Get mirror info for logging before deletion
-            var mirrorForLog = _configService.GetMirror(mirrorId);
+            var mirrorForLog = _configService.Read(c => c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(m => m.Id == mirrorId));
+
             var mirrorEntity = mirrorForLog != null
                 ? new LogMirrorEntity(mirrorId, mirrorForLog.SourceLibraryName, mirrorForLog.TargetLibraryName)
                 : new LogMirrorEntity(mirrorId, mirrorName, mirrorName);
 
             try
             {
-                // When source is deleted: delete the mirror's Jellyfin library and files
-                // When mirror's Jellyfin library is deleted externally: just clean up the orphaned files
-                // In both cases, we always clean up files to prevent disk space accumulation
                 var deleteLibrary = reason == "source deleted";
-                var deleteFiles = true; // Always clean up orphaned hardlink files
+                var deleteFiles = true;
 
-                // Use forceConfigRemoval=true for orphan cleanup - we always want to remove from config
                 var deleteResult = await DeleteMirrorAsync(mirrorId, deleteLibrary: deleteLibrary, deleteFiles: deleteFiles, forceConfigRemoval: true, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (deleteResult.HasErrors)
                 {
-                    // Partial success - removed from config but some cleanup failed
                     result.CleanedUpMirrors.Add($"{mirrorName} ({reason}) [with warnings]");
                     if (!string.IsNullOrEmpty(deleteResult.LibraryDeletionError))
                     {
@@ -992,10 +1028,9 @@ public class MirrorService : IMirrorService
 
                 if (reason == "mirror deleted")
                 {
-                    // Re-check if source has other mirrors using fresh config
-                    var sourceHasOtherMirrors = _configService.GetAlternatives()
+                    var sourceHasOtherMirrors = _configService.Read(c => c.LanguageAlternatives
                         .SelectMany(a => a.MirroredLibraries)
-                        .Any(m => m.SourceLibraryId == sourceLibraryId);
+                        .Any(m => m.SourceLibraryId == sourceLibraryId));
 
                     if (!sourceHasOtherMirrors && existingLibraryIds.Contains(sourceLibraryId))
                     {
@@ -1064,10 +1099,10 @@ public class MirrorService : IMirrorService
             yield break;
         }
 
-        // Use thread-safe getters that return copies of the collections
-        // This prevents enumeration exceptions if collections are modified during iteration
-        var excludedExtensions = _configService.GetExcludedExtensions();
-        var excludedDirectoryNames = _configService.GetExcludedDirectories();
+        // Use thread-safe reads
+        var (excludedExtensions, excludedDirectoryNames) = _configService.Read(c =>
+            (c.ExcludedExtensions.ToHashSet(StringComparer.OrdinalIgnoreCase),
+             c.ExcludedDirectories.ToHashSet(StringComparer.OrdinalIgnoreCase)));
 
         var excludedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var directory in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories))
@@ -1120,17 +1155,21 @@ public class MirrorService : IMirrorService
 
     /// <summary>
     /// Creates a Jellyfin library for the mirror.
-    /// Uses IDs to ensure fresh config lookup.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown if alternative or mirror is not found (e.g., deleted concurrently).</exception>
     private async Task CreateJellyfinLibraryAsync(Guid alternativeId, Guid mirrorId, CancellationToken cancellationToken)
     {
         _logger.PolyglotDebug("CreateJellyfinLibraryAsync: Creating library for mirror {0}",
             _configService.CreateLogMirror(mirrorId));
 
         // Get fresh data
-        var alternative = _configService.GetAlternative(alternativeId);
-        var mirror = _configService.GetMirror(mirrorId);
+        var (alternative, mirror) = _configService.Read(c =>
+        {
+            var alt = c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId);
+            var m = c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(x => x.Id == mirrorId);
+            return (alt, m);
+        });
 
         if (alternative == null)
         {
@@ -1220,7 +1259,6 @@ public class MirrorService : IMirrorService
 
         if (createdLibrary == null)
         {
-            // Library creation failed - could be name conflict or other Jellyfin issue
             _logger.PolyglotError(
                 "CreateJellyfinLibraryAsync: Failed to create Jellyfin library for mirror {0}. " +
                 "Library may already exist with the same name or Jellyfin rejected the request.",
@@ -1234,7 +1272,13 @@ public class MirrorService : IMirrorService
         var targetLibraryEntity = new LogLibraryEntity(targetLibraryId, mirror.TargetLibraryName, isMirror: true);
 
         // Update mirror with target library ID atomically
-        _configService.UpdateMirror(mirrorId, m => m.TargetLibraryId = targetLibraryId);
+        _configService.Update(c =>
+        {
+            var m = c.LanguageAlternatives
+                .SelectMany(a => a.MirroredLibraries)
+                .FirstOrDefault(x => x.Id == mirrorId);
+            if (m != null) m.TargetLibraryId = targetLibraryId;
+        });
 
         _libraryManager.AddMediaPath(mirror.TargetLibraryName, new MediaBrowser.Model.Configuration.MediaPathInfo
         {
@@ -1290,7 +1334,6 @@ public class MirrorService : IMirrorService
 
     /// <summary>
     /// Safely reports progress without throwing if the callback fails.
-    /// Progress reporting failures should not affect the core sync operation.
     /// </summary>
     private void SafeReportProgress(IProgress<double>? progress, double value)
     {
@@ -1305,7 +1348,6 @@ public class MirrorService : IMirrorService
         }
         catch (Exception ex)
         {
-            // Progress callback failed (e.g., UI component disposed) - log but don't affect the operation
             _logger.PolyglotDebug("Progress callback failed: {0}", ex.Message);
         }
     }

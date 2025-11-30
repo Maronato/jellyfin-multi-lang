@@ -58,7 +58,7 @@ public class UserLanguageService : IUserLanguageService
         LanguageAlternative? alternative = null;
         if (alternativeId.HasValue)
         {
-            alternative = _configService.GetAlternative(alternativeId.Value);
+            alternative = _configService.Read(c => c.LanguageAlternatives.FirstOrDefault(a => a.Id == alternativeId.Value));
             if (alternative == null)
             {
                 throw new ArgumentException($"Language alternative {alternativeId} not found", nameof(alternativeId));
@@ -66,8 +66,15 @@ public class UserLanguageService : IUserLanguageService
         }
 
         // Update or create user language config atomically
-        _configService.UpdateOrCreateUserLanguage(userId, userConfig =>
+        _configService.Update(c =>
         {
+            var userConfig = c.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            if (userConfig == null)
+            {
+                userConfig = new UserLanguageConfig { UserId = userId };
+                c.UserLanguages.Add(userConfig);
+            }
+
             userConfig.SelectedAlternativeId = alternativeId;
             userConfig.ManuallySet = manuallySet;
             userConfig.IsPluginManaged = isPluginManaged;
@@ -105,19 +112,22 @@ public class UserLanguageService : IUserLanguageService
     /// <inheritdoc />
     public UserLanguageConfig? GetUserLanguage(Guid userId)
     {
-        return _configService.GetUserLanguage(userId);
+        return _configService.Read(c => c.UserLanguages.FirstOrDefault(u => u.UserId == userId));
     }
 
     /// <inheritdoc />
     public LanguageAlternative? GetUserLanguageAlternative(Guid userId)
     {
-        var userConfig = _configService.GetUserLanguage(userId);
-        if (userConfig == null || !userConfig.SelectedAlternativeId.HasValue)
+        return _configService.Read(c =>
         {
-            return null;
-        }
+            var userConfig = c.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            if (userConfig == null || !userConfig.SelectedAlternativeId.HasValue)
+            {
+                return null;
+            }
 
-        return _configService.GetAlternative(userConfig.SelectedAlternativeId.Value);
+            return c.LanguageAlternatives.FirstOrDefault(a => a.Id == userConfig.SelectedAlternativeId.Value);
+        });
     }
 
     /// <inheritdoc />
@@ -126,15 +136,18 @@ public class UserLanguageService : IUserLanguageService
         _logger.PolyglotDebug("ClearLanguageAsync: Clearing language for user {0}",
             _userManager.CreateLogUser(userId));
 
-        // Get user info for logging before update
         var user = _userManager.GetUserById(userId);
         var userEntity = _userManager.CreateLogUser(userId, user?.Username);
 
-        var updated = _configService.UpdateUserLanguage(userId, userConfig =>
+        var updated = _configService.Update(c =>
         {
+            var userConfig = c.UserLanguages.FirstOrDefault(u => u.UserId == userId);
+            if (userConfig == null) return false;
+
             userConfig.SelectedAlternativeId = null;
             userConfig.SetAt = DateTime.UtcNow;
             userConfig.SetBy = "admin";
+            return true;
         });
 
         if (updated)
@@ -154,8 +167,8 @@ public class UserLanguageService : IUserLanguageService
     public IEnumerable<UserInfo> GetAllUsersWithLanguages()
     {
         var users = _userManager.Users;
-        var userLanguages = _configService.GetUserLanguages();
-        var alternatives = _configService.GetAlternatives();
+        var (userLanguages, alternatives) = _configService.Read(c =>
+            (c.UserLanguages.ToList(), c.LanguageAlternatives.ToList()));
 
         foreach (var user in users)
         {
@@ -189,8 +202,7 @@ public class UserLanguageService : IUserLanguageService
     /// <inheritdoc />
     public bool IsManuallySet(Guid userId)
     {
-        var userConfig = _configService.GetUserLanguage(userId);
-        return userConfig?.ManuallySet ?? false;
+        return _configService.Read(c => c.UserLanguages.FirstOrDefault(u => u.UserId == userId)?.ManuallySet ?? false);
     }
 
     /// <inheritdoc />
@@ -199,10 +211,15 @@ public class UserLanguageService : IUserLanguageService
         _logger.PolyglotDebug("RemoveUser: Removing language assignment for user {0}",
             _userManager.CreateLogUser(userId));
 
-        // User may already be deleted from Jellyfin, so use ID-based entity
         var userEntity = _userManager.CreateLogUser(userId);
 
-        if (_configService.RemoveUserLanguage(userId))
+        var removed = _configService.Update(c =>
+        {
+            var count = c.UserLanguages.RemoveAll(u => u.UserId == userId);
+            return count > 0;
+        });
+
+        if (removed)
         {
             _logger.PolyglotInfo("RemoveUser: Removed language assignment for deleted user {0}", userEntity);
         }

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace Jellyfin.Plugin.Polyglot.Models;
 
@@ -53,25 +52,4 @@ public class LanguageAlternative
     /// Gets or sets when this alternative was last modified.
     /// </summary>
     public DateTime? ModifiedAt { get; set; }
-
-    /// <summary>
-    /// Creates a deep copy of this alternative, including all mirrored libraries.
-    /// </summary>
-    /// <returns>A new LanguageAlternative instance with copied values.</returns>
-    public LanguageAlternative DeepClone()
-    {
-        return new LanguageAlternative
-        {
-            Id = Id,
-            Name = Name,
-            LanguageCode = LanguageCode,
-            MetadataLanguage = MetadataLanguage,
-            MetadataCountry = MetadataCountry,
-            DestinationBasePath = DestinationBasePath,
-            MirroredLibraries = MirroredLibraries.Select(m => m.DeepClone()).ToList(),
-            CreatedAt = CreatedAt,
-            ModifiedAt = ModifiedAt
-        };
-    }
 }
-
