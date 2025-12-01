@@ -570,6 +570,22 @@ public class FileClassifierTests
     }
 
     [Theory]
+    [InlineData("MovieName.trickplay")]
+    [InlineData("7 Prisoners (2021) [imdbid-tt14168118].trickplay")]
+    [InlineData("Show S01E01.trickplay")]
+    public void IsIncludedDirectory_TrickplaySuffixPattern_ReturnsTrue(string dirName)
+    {
+        // Arrange - Jellyfin creates trickplay directories with movie/episode name + .trickplay suffix
+        var directoryPath = $"/media/movies/Movie/{dirName}";
+
+        // Act
+        var result = FileClassifier.IsIncludedDirectory(directoryPath);
+
+        // Assert
+        result.Should().BeTrue($"{dirName} ends with .trickplay and should match the included directory pattern");
+    }
+
+    [Theory]
     [InlineData("Movie")]
     [InlineData("extrafanart")]
     [InlineData("metadata")]
@@ -596,6 +612,19 @@ public class FileClassifierTests
 
         // Assert
         result.Should().BeTrue($"{filePath} is in an included directory and should be hardlinked regardless of extension");
+    }
+
+    [Theory]
+    [InlineData("/media/movies/Movie/MovieName.trickplay/tile.jpg")]
+    [InlineData("/media/movies/Movie/7 Prisoners (2021).trickplay/preview.jpg")]
+    [InlineData("/media/movies/Movie/Episode S01E01.trickplay/segment/tile.bif")]
+    public void ShouldHardlink_FileInTrickplaySuffixDirectory_ReturnsTrue(string filePath)
+    {
+        // Act - Jellyfin creates trickplay directories named "{mediafile}.trickplay"
+        var result = FileClassifier.ShouldHardlink(filePath);
+
+        // Assert
+        result.Should().BeTrue($"{filePath} is in a *.trickplay directory and should be hardlinked");
     }
 
     [Fact]

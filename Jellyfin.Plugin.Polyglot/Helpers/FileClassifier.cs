@@ -169,6 +169,7 @@ public static class FileClassifier
 
     /// <summary>
     /// Determines whether a directory is an "included" directory where all files should be hardlinked.
+    /// Supports both exact matches and suffix matches (e.g., ".trickplay" matches "movie.trickplay").
     /// </summary>
     /// <param name="directoryPath">The full path to the directory.</param>
     /// <param name="includedDirectories">Custom list of directories to include. If null, uses defaults.</param>
@@ -185,7 +186,7 @@ public static class FileClassifier
             : DefaultIncludedDirectories;
 
         var dirName = Path.GetFileName(directoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        return includedDirs.Contains(dirName);
+        return MatchesIncludedDirectory(dirName, includedDirs);
     }
 
     /// <summary>
@@ -210,6 +211,7 @@ public static class FileClassifier
 
     /// <summary>
     /// Checks if the file path is within an included directory.
+    /// Supports both exact matches (e.g., ".actors") and suffix matches (e.g., "movie.trickplay" matches ".trickplay").
     /// </summary>
     private static bool IsInIncludedDirectory(string filePath, IReadOnlySet<string> includedDirectories)
     {
@@ -217,12 +219,37 @@ public static class FileClassifier
         while (!string.IsNullOrEmpty(directory))
         {
             var dirName = Path.GetFileName(directory);
-            if (includedDirectories.Contains(dirName))
+            if (MatchesIncludedDirectory(dirName, includedDirectories))
             {
                 return true;
             }
 
             directory = Path.GetDirectoryName(directory);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if a directory name matches any included directory pattern.
+    /// Matches both exact names and suffix patterns (e.g., ".trickplay" matches both
+    /// a directory named ".trickplay" and "MovieName.trickplay").
+    /// </summary>
+    private static bool MatchesIncludedDirectory(string dirName, IReadOnlySet<string> includedDirectories)
+    {
+        foreach (var included in includedDirectories)
+        {
+            // Exact match
+            if (string.Equals(dirName, included, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Suffix match for patterns starting with "." (e.g., ".trickplay" matches "movie.trickplay")
+            if (included.StartsWith('.') && dirName.EndsWith(included, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
         }
 
         return false;

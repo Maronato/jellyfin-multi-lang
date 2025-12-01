@@ -535,6 +535,43 @@ public class MirrorServiceFileOperationTests : IDisposable
     }
 
     [Fact]
+    public async Task SyncMirrorAsync_TrickplaySuffixDirectories_SyncedWithImages()
+    {
+        // Arrange - Jellyfin creates trickplay directories named "{mediafile}.trickplay"
+        var sourceDir = Path.Combine(_tempDir, "source");
+        var targetDir = Path.Combine(_tempDir, "target");
+        Directory.CreateDirectory(Path.Combine(sourceDir, "movie.trickplay"));
+        Directory.CreateDirectory(targetDir);
+
+        File.WriteAllText(Path.Combine(sourceDir, "movie.mkv"), "video");
+        File.WriteAllText(Path.Combine(sourceDir, "movie.trickplay", "preview.jpg"), "trickplay"); // .jpg would be excluded normally
+
+        var sourceId = Guid.NewGuid();
+        _libraryManagerMock.Setup(m => m.GetVirtualFolders()).Returns(new List<VirtualFolderInfo>
+        {
+            new() { ItemId = sourceId.ToString(), Name = "Movies", Locations = new[] { sourceDir } }
+        });
+
+        var mirror = new LibraryMirror
+        {
+            Id = Guid.NewGuid(),
+            SourceLibraryId = sourceId,
+            SourceLibraryName = "Movies",
+            TargetPath = targetDir,
+            Status = SyncStatus.Pending
+        };
+        SetupMirrorConfig(mirror);
+
+        // Act
+        await _service.SyncMirrorAsync(mirror.Id);
+
+        // Assert
+        File.Exists(Path.Combine(targetDir, "movie.mkv")).Should().BeTrue();
+        Directory.Exists(Path.Combine(targetDir, "movie.trickplay")).Should().BeTrue("*.trickplay suffix directories should be synced");
+        File.Exists(Path.Combine(targetDir, "movie.trickplay", "preview.jpg")).Should().BeTrue("files in *.trickplay directories bypass extension exclusions");
+    }
+
+    [Fact]
     public async Task SyncMirrorAsync_ReportsProgress()
     {
         // Arrange
