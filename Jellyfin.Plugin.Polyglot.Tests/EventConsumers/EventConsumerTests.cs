@@ -13,23 +13,23 @@ using Xunit;
 namespace Jellyfin.Plugin.Polyglot.Tests.EventConsumers;
 
 /// <summary>
-/// Tests for UserCreatedConsumer - auto-assignment behavior.
+/// Tests for UserEventHandlers - user created event handling.
 /// </summary>
-public class UserCreatedConsumerTests : IDisposable
+public class UserCreatedHandlerTests : IDisposable
 {
     private readonly PluginTestContext _context;
     private readonly Mock<IUserLanguageService> _userLanguageServiceMock;
-    private readonly UserCreatedConsumer _consumer;
+    private readonly UserEventHandlers _handlers;
 
-    public UserCreatedConsumerTests()
+    public UserCreatedHandlerTests()
     {
         _context = new PluginTestContext();
         _userLanguageServiceMock = new Mock<IUserLanguageService>();
-        var logger = new Mock<ILogger<UserCreatedConsumer>>();
+        var logger = new Mock<ILogger<UserEventHandlers>>();
 
         var configServiceMock = TestHelpers.MockFactory.CreateConfigurationService(_context.Configuration);
 
-        _consumer = new UserCreatedConsumer(
+        _handlers = new UserEventHandlers(
             _userLanguageServiceMock.Object,
             configServiceMock.Object,
             logger.Object);
@@ -53,7 +53,7 @@ public class UserCreatedConsumerTests : IDisposable
         var eventArgs = CreateUserCreatedEvent(Guid.NewGuid(), "testuser");
 
         // Act
-        await _consumer.OnEvent(eventArgs);
+        await _handlers.HandleUserCreatedAsync(eventArgs);
 
         // Assert
         _userLanguageServiceMock.Verify(
@@ -78,7 +78,7 @@ public class UserCreatedConsumerTests : IDisposable
         var eventArgs = CreateUserCreatedEvent(userId, "testuser");
 
         // Act
-        await _consumer.OnEvent(eventArgs);
+        await _handlers.HandleUserCreatedAsync(eventArgs);
 
         // Assert
         _userLanguageServiceMock.Verify(
@@ -109,7 +109,7 @@ public class UserCreatedConsumerTests : IDisposable
         var eventArgs = CreateUserCreatedEvent(userId, "testuser");
 
         // Act
-        await _consumer.OnEvent(eventArgs);
+        await _handlers.HandleUserCreatedAsync(eventArgs);
 
         // Assert
         _userLanguageServiceMock.Verify(
@@ -125,28 +125,41 @@ public class UserCreatedConsumerTests : IDisposable
 }
 
 /// <summary>
-/// Tests for UserDeletedConsumer - cleanup behavior.
+/// Tests for UserEventHandlers - user deleted event handling.
 /// </summary>
-public class UserDeletedConsumerTests
+public class UserDeletedHandlerTests
 {
     private readonly Mock<IUserLanguageService> _userLanguageServiceMock;
-    private readonly UserDeletedConsumer _consumer;
+    private readonly Mock<IConfigurationService> _configServiceMock;
+    private readonly UserEventHandlers _handlers;
 
-    public UserDeletedConsumerTests()
+    public UserDeletedHandlerTests()
     {
         _userLanguageServiceMock = new Mock<IUserLanguageService>();
-        var logger = new Mock<ILogger<UserDeletedConsumer>>();
-        _consumer = new UserDeletedConsumer(_userLanguageServiceMock.Object, logger.Object);
+        _configServiceMock = new Mock<IConfigurationService>();
+        var logger = new Mock<ILogger<UserEventHandlers>>();
+        _handlers = new UserEventHandlers(
+            _userLanguageServiceMock.Object,
+            _configServiceMock.Object,
+            logger.Object);
+    }
+
+    private static UserDeletedEventArgs CreateUserDeletedEvent(Guid userId, string username)
+    {
+        var user = new User(username, "default", "default");
+        typeof(User).GetProperty("Id")?.SetValue(user, userId);
+        return new UserDeletedEventArgs(user);
     }
 
     [Fact]
-    public void RemoveUser_IsCalledForDeletedUser()
+    public async Task RemoveUser_IsCalledForDeletedUser()
     {
         // Arrange
         var userId = Guid.NewGuid();
+        var eventArgs = CreateUserDeletedEvent(userId, "testuser");
 
-        // Act - simulate what the consumer does
-        _userLanguageServiceMock.Object.RemoveUser(userId);
+        // Act
+        await _handlers.HandleUserDeletedAsync(eventArgs);
 
         // Assert
         _userLanguageServiceMock.Verify(s => s.RemoveUser(userId), Times.Once);

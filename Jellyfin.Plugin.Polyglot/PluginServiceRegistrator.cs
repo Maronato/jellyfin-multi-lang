@@ -1,9 +1,8 @@
-using Jellyfin.Data.Events.Users;
 using Jellyfin.Plugin.Polyglot.EventConsumers;
+using Jellyfin.Plugin.Polyglot.Helpers;
 using Jellyfin.Plugin.Polyglot.Services;
 using Jellyfin.Plugin.Polyglot.Tasks;
 using MediaBrowser.Controller;
-using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Tasks;
@@ -16,6 +15,16 @@ namespace Jellyfin.Plugin.Polyglot;
 /// </summary>
 public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
+    /// <summary>
+    /// Full type name for UserCreatedEventArgs (stable across Jellyfin versions).
+    /// </summary>
+    private const string UserCreatedEventArgsTypeName = "Jellyfin.Data.Events.Users.UserCreatedEventArgs";
+
+    /// <summary>
+    /// Full type name for UserDeletedEventArgs (stable across Jellyfin versions).
+    /// </summary>
+    private const string UserDeletedEventArgsTypeName = "Jellyfin.Data.Events.Users.UserDeletedEventArgs";
+
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
@@ -28,9 +37,22 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILibraryAccessService, LibraryAccessService>();
         serviceCollection.AddSingleton<IDebugReportService, DebugReportService>();
 
-        // Event consumers
-        serviceCollection.AddSingleton<IEventConsumer<UserCreatedEventArgs>, UserCreatedConsumer>();
-        serviceCollection.AddSingleton<IEventConsumer<UserDeletedEventArgs>, UserDeletedConsumer>();
+        // User event handlers service (used by dynamic event consumers)
+        serviceCollection.AddSingleton<IUserEventHandlers, UserEventHandlers>();
+
+        // Event consumers - registered dynamically to avoid compile-time dependencies
+        // on event args types that reference User (which moved in Jellyfin 10.11)
+        DynamicEventConsumer.TryRegister(
+            serviceCollection,
+            UserCreatedEventArgsTypeName,
+            typeof(IUserEventHandlers),
+            nameof(IUserEventHandlers.HandleUserCreatedAsync));
+
+        DynamicEventConsumer.TryRegister(
+            serviceCollection,
+            UserDeletedEventArgsTypeName,
+            typeof(IUserEventHandlers),
+            nameof(IUserEventHandlers.HandleUserDeletedAsync));
 
         // Hosted service for library change monitoring
         serviceCollection.AddHostedService<LibraryChangedConsumer>();
